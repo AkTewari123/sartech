@@ -179,7 +179,7 @@ export default function MissingPersonForm() {
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             <div>
-              <Label>Name</Label>
+              <Label className="mb-1">Name</Label>
               <Input
                 {...register("name", { required: "Name is required" })}
                 placeholder="Full name"
@@ -198,13 +198,13 @@ export default function MissingPersonForm() {
             </div>
 
             <div>
-              <Label>Search for a Location</Label>
+              <Label className="mb-1">Search for a Location</Label>
               <Input id="autocomplete" placeholder="Type an address or place" />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Latitude</Label>
+                <Label className="mb-1">Latitude</Label>
                 <Input
                   {...register("latitude", {
                     pattern: {
@@ -216,7 +216,7 @@ export default function MissingPersonForm() {
                 />
               </div>
               <div>
-                <Label>Longitude</Label>
+                <Label className="mb-1">Longitude</Label>
                 <Input
                   {...register("longitude", {
                     pattern: {
