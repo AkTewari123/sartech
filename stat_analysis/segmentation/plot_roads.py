@@ -1,37 +1,36 @@
-import ee
+import requests
 import matplotlib.pyplot as plt
-from shapely.geometry import shape, Polygon, MultiPolygon
-from matplotlib.patches import Polygon as MplPolygon
-from matplotlib.collections import PatchCollection
 
-ee.Initialize(project='sartech-api')
+# ====== 1. Define bounding box ======
+# Format: south,west,north,east
+# This box covers a suburban area around Princeton University
+bbox = "36.460,-116.950,36.600,-116.800"   # Princeton, NJ
 
-# Define ROI
-roi = ee.Geometry.Rectangle([-74.2, 40.7, -74.1, 40.75])
+# ====== 2. Query OpenStreetMap Overpass API ======
+overpass_url = "https://overpass-api.de/api/interpreter"
+query = f"""
+[out:json];
+way["highway"]({bbox});
+(._;>;);
+out geom;
+"""
+response = requests.get(overpass_url, params={"data": query})
+data = response.json()
 
-# Load roads dataset
-roads = ee.FeatureCollection("TIGER/2016/Roads")
-roads_roi = roads.filterBounds(roi)
+# ====== 3. Extract road coordinate sequences ======
+roads = []
+for element in data["elements"]:
+    if element["type"] == "way" and "geometry" in element:
+        coords = [(pt["lon"], pt["lat"]) for pt in element["geometry"]]
+        roads.append(coords)
 
-geojson = roads_roi.getInfo()
-patches = []
-for feature in geojson['features']:
-    shapely_geom = shape(feature['geometry'])
-    if isinstance(shapely_geom, Polygon):
-        patches.append(MplPolygon(list(shapely_geom.exterior.coords), closed=True))
-    elif isinstance(shapely_geom, MultiPolygon):
-        for poly in shapely_geom.geoms:
-            patches.append(MplPolygon(list(poly.exterior.coords), closed=True))
+# ====== 4. Plot with Matplotlib ======
+fig, ax = plt.subplots(figsize=(10, 10))
+for road in roads:
+    lons, lats = zip(*road)
+    ax.plot(lons, lats, color="gray", linewidth=4)  # <-- 10 px thick
 
-fig, ax = plt.subplots(figsize=(8,8))
-ax.add_collection(PatchCollection(patches, facecolor='red', edgecolor='darkred', alpha=0.7))
-
-coords = roi.getInfo()['coordinates'][0]
-min_lon, min_lat = coords[0]
-max_lon, max_lat = coords[2]
-ax.set_xlim(min_lon, max_lon)
-ax.set_ylim(min_lat, max_lat)
-ax.set_xlabel('Longitude')
-ax.set_ylabel('Latitude')
-ax.set_title('Roads')
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.set_title("Princeton, NJ Suburban Roads (OSM)")
 plt.show()

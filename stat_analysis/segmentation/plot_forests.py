@@ -4,31 +4,31 @@ from shapely.geometry import shape, Polygon, MultiPolygon
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 
-# Initialize EE
-ee.Initialize(project='sartech-api')
+# Initialize Earth Engine
+ee.Initialize(project="sartech-api")
 
-# --- ROI in forested area ---
-roi = ee.Geometry.Rectangle([-74.4, 40.85, -74.1, 41.05])
+# --- 1. Define ROI: Jamanxim deforested area in Brazil ---
+roi = ee.Geometry.Rectangle([-118.271, 34.021, -118.243, 34.051])
 
-# --- Load Proba-V landcover ---
-landcover_col = ee.ImageCollection("COPERNICUS/Landcover/100m/Proba-V-C3/Global")
-landcover = landcover_col.first().select('discrete_classification')
+# --- 2. Load Hansen Global Forest Change dataset ---
+# Band 'treecover2000' = % tree cover in 2000
+hansen = ee.Image('UMD/hansen/global_forest_change_2022_v1_10').select('treecover2000')
 
-# --- Mask forest (class 50) ---
-forest_mask = landcover.eq(50).selfMask()
+# --- 3. Mask forested pixels (choose threshold for sparse vs dense forests) ---
+forest_mask = hansen.gte(10).selfMask()  # >=10% tree cover
 forest_roi = forest_mask.clip(roi)
 
-# --- Vectorize ---
+# --- 4. Convert raster to vectors ---
 forest_polygons = forest_roi.reduceToVectors(
     geometry=roi,
-    scale=100,
+    scale=20,               # 30 m resolution
     geometryType='polygon',
     eightConnected=True,
     labelProperty='forest',
     maxPixels=1e10
 )
 
-# --- Convert to matplotlib patches ---
+# --- 5. Convert to matplotlib patches ---
 geojson = forest_polygons.getInfo()
 patches = []
 for feature in geojson['features']:
@@ -39,9 +39,9 @@ for feature in geojson['features']:
         for poly in geom.geoms:
             patches.append(MplPolygon(list(poly.exterior.coords), closed=True))
 
-# --- Plot ---
-fig, ax = plt.subplots(figsize=(10,10))
-ax.add_collection(PatchCollection(patches, facecolor='green', edgecolor='black', alpha=0.5))
+# --- 6. Plot with matplotlib ---
+fig, ax = plt.subplots(figsize=(12,12))
+ax.add_collection(PatchCollection(patches, facecolor='green', edgecolor='black', alpha=0.6))
 
 coords = roi.getInfo()['coordinates'][0]
 min_lon, min_lat = coords[0]
@@ -50,5 +50,6 @@ ax.set_xlim(min_lon, max_lon)
 ax.set_ylim(min_lat, max_lat)
 ax.set_xlabel('Longitude')
 ax.set_ylabel('Latitude')
-ax.set_title('Forest Polygons')
+ax.set_title('Forest Coverage in Jamanxim National Forest (Hansen 2022, treecover >= 10%)')
+
 plt.show()
