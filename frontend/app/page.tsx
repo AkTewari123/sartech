@@ -7,9 +7,20 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 export default function Home() {
   const [path, setPath] = useState<{ lat: number; lng: number }[]>([]);
   const [mapInstance, setMapInstance] = useState<any | null>(null);
-  const apiKey = process.env.NEXT_PUBLIC_MAPS_API;
 
-  // Fetch flight path from API
+  const apiKey = process.env.NEXT_PUBLIC_MAPS_API;
+  const mapId = process.env.NEXT_PUBLIC_MAP_ID; // 3D Tiles Map ID
+
+  // Styling to remove all labels/icons for 3D Tiles
+  const clean3DStyle = [
+    { featureType: "all", elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "all", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+    { featureType: "poi", elementType: "all", stylers: [{ visibility: "off" }] },
+    { featureType: "administrative", elementType: "all", stylers: [{ visibility: "off" }] },
+    { featureType: "road", elementType: "labels", stylers: [{ visibility: "off" }] },
+  ];
+
+  // Fetch flight path
   useEffect(() => {
     async function fetchPath() {
       const res = await fetch("/api/flightpath");
@@ -19,260 +30,7 @@ export default function Home() {
     fetchPath();
   }, []);
 
-  // Dark Apple-like style for map
-  const darkAppleStyle = [
-    {
-      featureType: "all",
-      elementType: "labels",
-      stylers: [
-        {
-          visibility: "off",
-        },
-      ],
-    },
-    {
-      featureType: "all",
-      elementType: "labels.text",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "all",
-      elementType: "labels.text.fill",
-      stylers: [
-        {
-          weight: 7.5,
-        },
-        {
-          color: "#708090",
-        },
-      ],
-    },
-    {
-      featureType: "all",
-      elementType: "labels.text.stroke",
-      stylers: [
-        {
-          weight: 1.1,
-        },
-        {
-          color: "#3c6382",
-        },
-      ],
-    },
-    {
-      featureType: "all",
-      elementType: "labels.icon",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "administrative",
-      elementType: "all",
-      stylers: [
-        {
-          visibility: "off",
-        },
-      ],
-    },
-    {
-      featureType: "administrative.country",
-      elementType: "labels.text.fill",
-      stylers: [
-        {
-          saturation: "41",
-        },
-        {
-          lightness: "20",
-        },
-      ],
-    },
-    {
-      featureType: "administrative.locality",
-      elementType: "labels",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "administrative.locality",
-      elementType: "labels.text",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "landscape",
-      elementType: "all",
-      stylers: [
-        {
-          color: "#1e272e",
-        },
-      ],
-    },
-    {
-      featureType: "poi",
-      elementType: "all",
-      stylers: [
-        {
-          visibility: "off",
-        },
-      ],
-    },
-    {
-      featureType: "road",
-      elementType: "geometry.fill",
-      stylers: [
-        {
-          color: "#708090",
-        },
-        {
-          weight: 0.5,
-        },
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "road",
-      elementType: "geometry.stroke",
-      stylers: [
-        {
-          color: "#273c75",
-        },
-        {
-          weight: 1.4,
-        },
-      ],
-    },
-    {
-      featureType: "road",
-      elementType: "labels",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "road",
-      elementType: "labels.text",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "road",
-      elementType: "labels.icon",
-      stylers: [
-        {
-          visibility: "off",
-        },
-        {
-          saturation: "-100",
-        },
-        {
-          lightness: "0",
-        },
-        {
-          gamma: "0.00",
-        },
-        {
-          weight: "1",
-        },
-      ],
-    },
-    {
-      featureType: "road.arterial",
-      elementType: "all",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "road.arterial",
-      elementType: "labels.text",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "road.local",
-      elementType: "geometry.fill",
-      stylers: [
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "transit",
-      elementType: "all",
-      stylers: [
-        {
-          visibility: "off",
-        },
-      ],
-    },
-    {
-      featureType: "water",
-      elementType: "all",
-      stylers: [
-        {
-          color: "#778899",
-        },
-        {
-          visibility: "on",
-        },
-      ],
-    },
-    {
-      featureType: "water",
-      elementType: "geometry.fill",
-      stylers: [
-        {
-          visibility: "on",
-        },
-        {
-          saturation: "100",
-        },
-        {
-          gamma: "1.00",
-        },
-        {
-          lightness: "54",
-        },
-      ],
-    },
-    {
-      featureType: "water",
-      elementType: "geometry.stroke",
-      stylers: [
-        {
-          visibility: "off",
-        },
-      ],
-    },
-  ];
-
-  // Draw flight path polyline
+  // Draw flight path
   const drawFlightPath = (map: any) => {
     new window.google.maps.Polyline({
       path,
@@ -292,26 +50,33 @@ export default function Home() {
     });
   };
 
-  // Initialize Google Map + Drone Model
   useEffect(() => {
-    if (!path.length || !apiKey) return;
+    if (!path.length || !apiKey || !mapId) return;
 
     const initMap = () => {
       const map = new window.google.maps.Map(
         document.getElementById("map") as HTMLElement,
         {
           center: path[0],
-          zoom: 14,
-          mapTypeId: "roadmap",
-          styles: darkAppleStyle,
-          tilt: 0,
+          zoom: 9,
+          tilt: 65,
+          heading: 0,
+          mapId: mapId,
+          // Remove labels/icons via styles and disable UI controls to prevent switching to 2D/terrain
+          styles: clean3DStyle, // ✅ remove labels/icons
+          disableDefaultUI: true,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          clickableIcons: false,
+          gestureHandling: "greedy",
         }
       );
 
       drawFlightPath(map);
       setMapInstance(map);
 
-      // WebGLOverlayView for 3D Drone
+      // WebGLOverlayView for drone
       const overlay = new window.google.maps.WebGLOverlayView();
 
       overlay.onAdd = () => {
@@ -325,17 +90,19 @@ export default function Home() {
         dirLight.position.set(0, 10, 0);
         overlay.scene.add(dirLight);
 
-        // Load drone model from drones/
+        // Load drone model
         const loader = new GLTFLoader();
         loader.load(
-          "/drones/drone_model.gltf",
-          (gltf: any) => {
-            overlay.droneModel = gltf.scene;
-            overlay.scene.add(overlay.droneModel);
-          },
-          undefined,
-          (err: ErrorEvent) => err
-        );
+  "/drone/scene.gltf",   // correct path
+  (gltf: any) => {
+    overlay.droneModel = gltf.scene;
+    overlay.droneModel.scale.set(50, 50, 50); // make it visible
+    overlay.scene.add(overlay.droneModel);
+  },
+  undefined,
+  (err: ErrorEvent) => console.error(err)
+);
+
       };
 
       overlay.onContextRestored = ({ gl }: any) => {
@@ -347,11 +114,12 @@ export default function Home() {
         overlay.renderer.autoClear = false;
       };
 
-      overlay.onDraw = ({ gl, transformer }: any) => {
+      // Animate drone
+      let index = 0;
+      overlay.onDraw = ({ transformer }: any) => {
         if (!overlay.droneModel) return;
 
-        // Position drone at first path point (altitude = 50)
-        const { lat, lng } = path[0];
+        const { lat, lng } = path[index];
         const coords = transformer.latLngAltitudeToWorld({
           lat,
           lng,
@@ -359,18 +127,30 @@ export default function Home() {
         });
         overlay.droneModel.position.set(coords.x, coords.y, coords.z);
 
+        if (index < path.length - 1) {
+          const { lat: nLat, lng: nLng } = path[index + 1];
+          const next = transformer.latLngAltitudeToWorld({
+            lat: nLat,
+            lng: nLng,
+            altitude: 50,
+          });
+          overlay.droneModel.lookAt(next.x, next.y, next.z);
+        }
+
         overlay.renderer.render(overlay.scene, overlay.camera);
         overlay.renderer.resetState();
+
+        index = (index + 1) % path.length;
       };
 
       overlay.setMap(map);
     };
 
-    // Load Google Maps script
+    // Load Maps script
     if (!document.getElementById("google-maps-script")) {
       const script = document.createElement("script");
       script.id = "google-maps-script";
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&map_ids=${mapId}&v=beta&callback=initMap`;
       script.async = true;
       script.defer = true;
       // @ts-ignore
@@ -380,46 +160,11 @@ export default function Home() {
       // @ts-ignore
       if (window.google) initMap();
     }
-  }, [path, apiKey]);
-
-  // 2D map toggle
-  const enable2D = () => {
-    if (mapInstance) {
-      mapInstance.setMapTypeId("roadmap");
-      mapInstance.setTilt(0);
-      mapInstance.setHeading(0);
-      mapInstance.setOptions({ styles: darkAppleStyle });
-    }
-  };
-
-  // 3D map toggle
-  const enable3D = () => {
-    if (mapInstance) {
-      mapInstance.setMapTypeId("satellite");
-      mapInstance.setTilt(60);
-      mapInstance.setHeading(0);
-      mapInstance.setOptions({ styles: darkAppleStyle });
-      mapInstance.setZoom(Math.max(mapInstance.getZoom() || 18, 18));
-    }
-  };
+  }, [path, apiKey, mapId]);
 
   return (
-    <div className="relative w-full h-screen m-0 p-0">
+    <div className="relative w-full h-screen">
       <div id="map" style={{ width: "100%", height: "100%" }} />
-      <div className="absolute bottom-8 left-8 flex gap-2 z-10">
-        <button
-          onClick={enable2D}
-          className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700"
-        >
-          2D Dark
-        </button>
-        <button
-          onClick={enable3D}
-          className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700"
-        >
-          3D Dark
-        </button>
-      </div>
     </div>
   );
 }
