@@ -1,23 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 export default function Home() {
   const [path, setPath] = useState<{ lat: number; lng: number }[]>([]);
   const [mapInstance, setMapInstance] = useState<any | null>(null);
   const apiKey = process.env.NEXT_PUBLIC_MAPS_API;
 
-  // Fetch the flight path from your API
+  // Fetch flight path from API
   useEffect(() => {
-    async function loadPath() {
+    async function fetchPath() {
       const res = await fetch("/api/flightpath");
       const data = await res.json();
       setPath(data.path);
     }
-    loadPath();
+    fetchPath();
   }, []);
 
-  // Dark Apple-like style for 2D and 3D
+  // Dark Apple-like style for map
   const darkAppleStyle = [
     {
       featureType: "all",
@@ -270,30 +272,27 @@ export default function Home() {
     },
   ];
 
-  // Draw polyline with outline trick
+  // Draw flight path polyline
   const drawFlightPath = (map: any) => {
-    // Outline
     new window.google.maps.Polyline({
       path,
       geodesic: true,
       strokeColor: "#3199F9",
-      strokeOpacity: 1.0,
+      strokeOpacity: 1,
       strokeWeight: 7,
       map,
     });
-
-    // Interior
     new window.google.maps.Polyline({
       path,
       geodesic: true,
       strokeColor: "#0273F8",
-      strokeOpacity: 1.0,
+      strokeOpacity: 1,
       strokeWeight: 4,
       map,
     });
   };
 
-  // Initialize Google Map
+  // Initialize Google Map + Drone Model
   useEffect(() => {
     if (!path.length || !apiKey) return;
 
@@ -305,13 +304,69 @@ export default function Home() {
           zoom: 14,
           mapTypeId: "roadmap",
           styles: darkAppleStyle,
+          tilt: 0,
         }
       );
 
       drawFlightPath(map);
       setMapInstance(map);
+
+      // WebGLOverlayView for 3D Drone
+      const overlay = new window.google.maps.WebGLOverlayView();
+
+      overlay.onAdd = () => {
+        overlay.scene = new THREE.Scene();
+        overlay.camera = new THREE.PerspectiveCamera();
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        overlay.scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(0, 10, 0);
+        overlay.scene.add(dirLight);
+
+        // Load drone model from drones/
+        const loader = new GLTFLoader();
+        loader.load(
+          "/drones/drone_model.gltf",
+          (gltf: any) => {
+            overlay.droneModel = gltf.scene;
+            overlay.scene.add(overlay.droneModel);
+          },
+          undefined,
+          (err: ErrorEvent) => err
+        );
+      };
+
+      overlay.onContextRestored = ({ gl }: any) => {
+        overlay.renderer = new THREE.WebGLRenderer({
+          canvas: gl.canvas,
+          context: gl,
+          ...gl.getContextAttributes(),
+        });
+        overlay.renderer.autoClear = false;
+      };
+
+      overlay.onDraw = ({ gl, transformer }: any) => {
+        if (!overlay.droneModel) return;
+
+        // Position drone at first path point (altitude = 50)
+        const { lat, lng } = path[0];
+        const coords = transformer.latLngAltitudeToWorld({
+          lat,
+          lng,
+          altitude: 50,
+        });
+        overlay.droneModel.position.set(coords.x, coords.y, coords.z);
+
+        overlay.renderer.render(overlay.scene, overlay.camera);
+        overlay.renderer.resetState();
+      };
+
+      overlay.setMap(map);
     };
 
+    // Load Google Maps script
     if (!document.getElementById("google-maps-script")) {
       const script = document.createElement("script");
       script.id = "google-maps-script";
@@ -327,7 +382,7 @@ export default function Home() {
     }
   }, [path, apiKey]);
 
-  // 2D toggle
+  // 2D map toggle
   const enable2D = () => {
     if (mapInstance) {
       mapInstance.setMapTypeId("roadmap");
@@ -337,7 +392,7 @@ export default function Home() {
     }
   };
 
-  // 3D toggle
+  // 3D map toggle
   const enable3D = () => {
     if (mapInstance) {
       mapInstance.setMapTypeId("satellite");
