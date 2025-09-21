@@ -26,7 +26,7 @@ export default function Home() {
       data: points.map(
         pt => new window.google.maps.LatLng(pt.lat, pt.lng)
       ),
-      radius: 10000,
+      radius: 100,
       opacity: 0.7,
     });
     heatmap.setMap(map);
