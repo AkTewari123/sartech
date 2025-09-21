@@ -9,11 +9,11 @@ from matplotlib.collections import PatchCollection
 ee.Initialize(project='sartech-api')
 
 # ====== 1. Define common bounding box ======
-# Using Princeton/Lawrence Township area in New Jersey (forests, D&R Canal, roads)
+# Using coordinates around 40.055910624826595, -76.91354490317927
 # Format: south,west,north,east for OSM
-bbox_osm = "40.26939147672528, -74.35779088398886,40.27939147672528, -74.34779088398886"
+bbox_osm = "40.005910,-76.96354,40.105910,-76.86354"
 # Format: [west, south, east, north] for Earth Engine  
-bbox_ee = [-74.35779088398886, 40.26939147672528, -74.34779088398886, 40.27939147672528]
+bbox_ee = [-76.96354, 40.005910, -76.86354, 40.105910]
 roi = ee.Geometry.Rectangle(bbox_ee)
 
 print("Fetching data from multiple sources...")
