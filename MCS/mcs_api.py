@@ -1,11 +1,9 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from flask import Flask, jsonify
 from mcs import OptimizedSwarmBot, NUM_BOTS
 
-app = FastAPI(title="Optimized Swarm Simulation API")
+app = Flask(__name__)
 
-
-@app.get("/simulate")
+@app.route("/simulate", methods=["GET"])
 def simulate_swarm():
     """
     Run the optimized swarm simulation and return bot data as JSON,
@@ -29,7 +27,11 @@ def simulate_swarm():
             for i in range(NUM_BOTS)
         ]
         
-        return JSONResponse(content={"num_bots": NUM_BOTS, "bots": bots_data})
+        return jsonify({"num_bots": NUM_BOTS, "bots": bots_data})
     
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    # Runs the Flask server continuously
+    app.run(host="0.0.0.0", port=8080, debug=True)
