@@ -24,7 +24,7 @@ CORS(app)  # Allow all origins
 
 @app.route("/", methods=["GET"])
 def health_check():
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "this is pennapps!!"})
 
 @app.route("/init_session", methods=["POST"])
 def init_session():
@@ -66,7 +66,7 @@ def upload_image():
     image_base64 = data.get("image_base64")
     name = data.get("filename")
 
-    if bucket not in ["pi-bucket", "base_comparison"]:
+    if bucket not in ["pi-image", "base_comparison"]:
         return jsonify({"error": "Invalid bucket name"}), 400
 
     if not image_base64 or not name:

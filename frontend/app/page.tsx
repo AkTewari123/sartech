@@ -221,7 +221,7 @@ export default function MissingPersonForm() {
         }),
       });
       // Redirect after success
-      // window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}`;
+      window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}&id=${EIGHT_DIGIT}`;
     } catch (err) {
       console.error(err);
       alert("Error submitting report");
@@ -292,6 +292,7 @@ export default function MissingPersonForm() {
                 accept="image/png, image/jpg, image/jpeg"
                 id="base_image_upload"
                 onChange={handleImageUpload}
+                required
               />
             </div>
 
