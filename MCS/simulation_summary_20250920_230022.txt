@@ -1,0 +1,15 @@
+Swarm Bot Simulation Summary
+Timestamp: 20250920_230022
+Number of bots: 10
+Simulation time: 5 seconds
+Image dimensions: 1816 x 1816 pixels
+Elevation preference: 0.65
+Age range: (0.1, 1.0)
+Speed range: (1, 5)
+
+Final positions summary:
+X range: 426.44 to 972.36
+Y range: 505.41 to 1141.15
+Density grid size: (100, 100)
+Max density: 0.000003
+Min density: 0.000000

@@ -6,6 +6,7 @@ from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 
 # Initialize Earth Engine
+ee.Authenticate();
 ee.Initialize(project='sartech-api')
 
 # ====== 1. Define common bounding box ======
