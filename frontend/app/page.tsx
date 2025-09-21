@@ -1,10 +1,11 @@
 "use client";
+
 import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-// import { Textarea } from "@/components/ui/textarea";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
@@ -155,19 +156,33 @@ export default function MissingPersonForm() {
 
   async function onSubmit(data: FormData) {
     try {
-      const formData = new FormData();
-      formData.append("name", data.name);
-      formData.append(
-        "hasMentalInjury",
-        data.hasMentalInjury ? "true" : "false"
-      );
-      formData.append("latitude", data.latitude);
-      formData.append("longitude", data.longitude);
-      formData.append("lastSeenClothing", data.lastSeenClothing);
+      // Construct JSON payload
+      const payload = {
+        name: data.name,
+        location: [parseFloat(data.latitude), parseFloat(data.longitude)],
+        description: data.lastSeenClothing,
+      };
 
-      if (data.imageFile && data.imageFile.length > 0) {
-        formData.append("imageFile", data.imageFile[0]);
+      // Send POST request to Flask server
+      const response = await fetch("http://127.0.0.1:5500/init_session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        console.error("Server error:", errData);
+        alert("Failed to create session: " + errData.error);
+        return;
       }
+
+      const result = await response.json();
+      console.log("Session created:", result);
+
+      // Redirect after success
       window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}`;
     } catch (err) {
       console.error(err);
@@ -242,10 +257,10 @@ export default function MissingPersonForm() {
 
             <div>
               <Label className="mb-1">Last Seen Clothing / Description</Label>
-              {/* <Textarea
+              <Textarea
                 {...register("lastSeenClothing")}
                 placeholder="Describe what the person was last wearing"
-              /> */}
+              />
             </div>
 
             <div className="h-64 w-full border rounded-md overflow-hidden">

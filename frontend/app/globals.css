@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -126,4 +128,11 @@ html, body, #__next {
   padding: 0;
   height: 100%;
   width: 100%;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('/fonts/Satoshi_Complete/Fonts/OTF/Satoshi-Medium.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
 }
