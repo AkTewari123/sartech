@@ -1,189 +1,244 @@
 "use client";
+import React, { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "../lib/utils";
+import { format } from "date-fns";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { CalendarIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
 
-import { useEffect, useState } from "react";
-import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+type FormData = {
+  name: string;
+  hasMentalInjury: boolean;
+  age: number | "";
+  missingDuration: string;
+  latitude: string;
+  longitude: string;
+};
 
-export default function Home() {
-  const [path, setPath] = useState<{ lat: number; lng: number }[]>([]);
-  const [mapInstance, setMapInstance] = useState<any | null>(null);
+export default function MissingPersonForm() {
+  const [date, setDate] = useState<Date>();
+  const [dateError, setDateError] = useState<string | null>(null);
 
-  const apiKey = process.env.NEXT_PUBLIC_MAPS_API;
-  const mapId = process.env.NEXT_PUBLIC_MAP_ID; // 3D Tiles Map ID
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors },
+  } = useForm<FormData>({
+    defaultValues: {
+      name: "",
+      hasMentalInjury: false,
+      age: "",
+      missingDuration: "",
+      latitude: "",
+      longitude: "",
+    },
+  });
 
-  // Styling to remove all labels/icons for 3D Tiles
-  const clean3DStyle = [
-    {
-      featureType: "all",
-      elementType: "labels",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "all",
-      elementType: "labels.icon",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "poi",
-      elementType: "all",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "administrative",
-      elementType: "all",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "road",
-      elementType: "labels",
-      stylers: [{ visibility: "off" }],
-    },
-  ];
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any | null>(null);
+  const markerRef = useRef<any | null>(null);
+  const autocompleteRef = useRef<any | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
-  // Fetch flight path
+  const lat = watch("latitude");
+  const lng = watch("longitude");
+
+  // Load Google Maps script with places library
   useEffect(() => {
-    async function fetchPath() {
-      const res = await fetch("/api/flightpath");
-      const data = await res.json();
-      setPath(data.path);
+    const key = process.env.NEXT_PUBLIC_MAPS_API;
+    if (!key) {
+      console.warn("Missing NEXT_PUBLIC_MAPS_API. Map won't load.");
+      return;
     }
-    fetchPath();
+
+    if ((window as any).google?.maps) {
+      setMapReady(true);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => setMapReady(true);
+    document.head.appendChild(script);
   }, []);
 
-  // Draw flight path
-  const drawFlightPath = (map: any) => {
-    new window.google.maps.Polyline({
-      path,
-      geodesic: true,
-      strokeColor: "#3199F9",
-      strokeOpacity: 1,
-      strokeWeight: 7,
-      map,
-    });
-    new window.google.maps.Polyline({
-      path,
-      geodesic: true,
-      strokeColor: "#0273F8",
-      strokeOpacity: 1,
-      strokeWeight: 4,
-      map,
-    });
-  };
-
+  // Initialize map and autocomplete
   useEffect(() => {
-    if (!path.length || !apiKey || !mapId) return;
+    if (!mapReady || !mapRef.current) return;
 
-    const initMap = () => {
-      const map = new window.google.maps.Map(
-        document.getElementById("map") as HTMLElement,
-        {
-          center: path[0],
-          zoom: 9,
-          tilt: 65,
-          heading: 0,
-          mapId: mapId,
-          // Remove labels/icons via styles and disable UI controls to prevent switching to 2D/terrain
-          styles: clean3DStyle, // ✅ remove labels/icons
-          disableDefaultUI: true,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-          clickableIcons: false,
-          gestureHandling: "greedy",
-        }
-      );
+    const center = { lat: 40.7128, lng: -74.006 };
+    mapInstanceRef.current = new (window as any).google.maps.Map(
+      mapRef.current,
+      {
+        center,
+        zoom: 12,
+        mapTypeId: "roadmap",
+        disableDefaultUI: true,
+      }
+    );
 
-      drawFlightPath(map);
-      setMapInstance(map);
+    // Click to place marker
+    mapInstanceRef.current.addListener("click", (e: any) => {
+      const pos = e.latLng;
+      if (!pos) return;
+      const plat = pos.lat().toFixed(6);
+      const plng = pos.lng().toFixed(6);
+      placeMarker({ lat: parseFloat(plat), lng: parseFloat(plng) });
+      setValue("latitude", plat, { shouldValidate: true });
+      setValue("longitude", plng, { shouldValidate: true });
+    });
 
-      // WebGLOverlayView for drone
-      const overlay = new window.google.maps.WebGLOverlayView();
+    // Autocomplete
+    const input = document.getElementById("autocomplete") as HTMLInputElement;
+    if (input) {
+      autocompleteRef.current = new (
+        window as any
+      ).google.maps.places.Autocomplete(input);
+      autocompleteRef.current.bindTo("bounds", mapInstanceRef.current);
+      autocompleteRef.current.addListener("place_changed", () => {
+        const place = autocompleteRef.current.getPlace();
+        if (!place.geometry || !place.geometry.location) return;
 
-      overlay.onAdd = () => {
-        overlay.scene = new THREE.Scene();
-        overlay.camera = new THREE.PerspectiveCamera();
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-        overlay.scene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
-        dirLight.position.set(0, 10, 0);
-        overlay.scene.add(dirLight);
-
-        // Load drone model
-        const loader = new GLTFLoader();
-        loader.load(
-          "/drone/scene.gltf", // correct path
-          (gltf: any) => {
-            overlay.droneModel = gltf.scene;
-            overlay.droneModel.scale.set(50, 50, 50); // make it visible
-            overlay.scene.add(overlay.droneModel);
-          },
-          undefined,
-          (err: ErrorEvent) => console.error(err)
-        );
-      };
-
-      overlay.onContextRestored = ({ gl }: any) => {
-        overlay.renderer = new THREE.WebGLRenderer({
-          canvas: gl.canvas,
-          context: gl,
-          ...gl.getContextAttributes(),
-        });
-        overlay.renderer.autoClear = false;
-      };
-
-      // Animate drone
-      let index = 0;
-      overlay.onDraw = ({ transformer }: any) => {
-        if (!overlay.droneModel) return;
-
-        const { lat, lng } = path[index];
-        const coords = transformer.latLngAltitudeToWorld({
-          lat,
-          lng,
-          altitude: 50,
-        });
-        overlay.droneModel.position.set(coords.x, coords.y, coords.z);
-
-        if (index < path.length - 1) {
-          const { lat: nLat, lng: nLng } = path[index + 1];
-          const next = transformer.latLngAltitudeToWorld({
-            lat: nLat,
-            lng: nLng,
-            altitude: 50,
-          });
-          overlay.droneModel.lookAt(next.x, next.y, next.z);
-        }
-
-        overlay.renderer.render(overlay.scene, overlay.camera);
-        overlay.renderer.resetState();
-
-        index = (index + 1) % path.length;
-      };
-
-      overlay.setMap(map);
-    };
-
-    // Load Maps script
-    if (!document.getElementById("google-maps-script")) {
-      const script = document.createElement("script");
-      script.id = "google-maps-script";
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&map_ids=${mapId}&v=beta&callback=initMap`;
-      script.async = true;
-      script.defer = true;
-      // @ts-ignore
-      window.initMap = initMap;
-      document.body.appendChild(script);
-    } else {
-      // @ts-ignore
-      if (window.google) initMap();
+        const location = place.geometry.location;
+        const plat = location.lat().toFixed(6);
+        const plng = location.lng().toFixed(6);
+        mapInstanceRef.current.setCenter(location);
+        mapInstanceRef.current.setZoom(15);
+        placeMarker({ lat: parseFloat(plat), lng: parseFloat(plng) });
+        setValue("latitude", plat, { shouldValidate: true });
+        setValue("longitude", plng, { shouldValidate: true });
+      });
     }
-  }, [path, apiKey, mapId]);
+  }, [mapReady]);
+
+  // Update marker when lat/lng typed manually
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const nlat = parseFloat(lat as any);
+    const nlng = parseFloat(lng as any);
+    if (!Number.isNaN(nlat) && !Number.isNaN(nlng)) {
+      placeMarker({ lat: nlat, lng: nlng });
+      mapInstanceRef.current.setCenter({ lat: nlat, lng: nlng });
+    }
+  }, [lat, lng]);
+
+  function placeMarker(position: { lat: number; lng: number }) {
+    if (!mapInstanceRef.current) return;
+    if (markerRef.current) {
+      markerRef.current.setPosition(position);
+    } else {
+      markerRef.current = new (window as any).google.maps.Marker({
+        position,
+        map: mapInstanceRef.current,
+        draggable: true,
+        icon: {
+          url: "/home/map-marker.png",
+          scaledSize: new (window as any).google.maps.Size(30, 40),
+        },
+      });
+      markerRef.current.addListener("dragend", () => {
+        const p = markerRef.current!.getPosition();
+        if (!p) return;
+        const plat = p.lat().toFixed(6);
+        const plng = p.lng().toFixed(6);
+        setValue("latitude", plat, { shouldValidate: true });
+        setValue("longitude", plng, { shouldValidate: true });
+      });
+    }
+  }
+
+  function onSubmit(data: FormData) {
+    console.log("submit payload:", {
+      ...data,
+      latitude: parseFloat(data.latitude),
+      longitude: parseFloat(data.longitude),
+    });
+    alert("Submitted — check console for payload.");
+  }
 
   return (
-    <div className="relative w-full h-screen">
-      <div id="map" style={{ width: "100%", height: "100%" }} />
+    <div className="h-screen flex items-center">
+      <Card className="max-w-3xl mx-auto">
+        <CardHeader>
+          <CardTitle>Missing Person / Last Seen Report</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            <div>
+              <Label className="mb-1">Name</Label>
+              <Input
+                {...register("name", { required: "Name is required" })}
+                placeholder="Full name"
+              />
+              {errors.name && (
+                <p className="text-sm text-red-600">{errors.name.message}</p>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <Label>Mental injury?</Label>
+              <Switch
+                checked={!!watch("hasMentalInjury")}
+                onCheckedChange={(v) => setValue("hasMentalInjury", Boolean(v))}
+              />
+            </div>
+
+            <div>
+              <Label className="mb-1">Search for a Location</Label>
+              <Input id="autocomplete" placeholder="Type an address or place" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-1">Latitude</Label>
+                <Input
+                  {...register("latitude", {
+                    pattern: {
+                      value: /^-?\d+(\.\d+)?$/,
+                      message: "Invalid latitude",
+                    },
+                  })}
+                  placeholder="40.7128"
+                />
+              </div>
+              <div>
+                <Label className="mb-1">Longitude</Label>
+                <Input
+                  {...register("longitude", {
+                    pattern: {
+                      value: /^-?\d+(\.\d+)?$/,
+                      message: "Invalid longitude",
+                    },
+                  })}
+                  placeholder="-74.0060"
+                />
+              </div>
+            </div>
+
+            <div className="h-64 w-full border rounded-md overflow-hidden">
+              <div ref={mapRef} className="h-full w-full" />
+            </div>
+
+            <div className="flex justify-end">
+              <Button type="submit">Submit report</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -10,11 +10,11 @@ ee.Authenticate();
 ee.Initialize(project='sartech-api')
 
 # ====== 1. Define common bounding box ======
-# Using Princeton/Lawrence Township area in New Jersey (forests, D&R Canal, roads)
+# Using coordinates around 40.055910624826595, -76.91354490317927
 # Format: south,west,north,east for OSM
-bbox_osm = "40.30,-74.70,40.38,-74.60"
+bbox_osm = "40.005910,-76.96354,40.105910,-76.86354"
 # Format: [west, south, east, north] for Earth Engine  
-bbox_ee = [-74.70, 40.30, -74.60, 40.38]
+bbox_ee = [-76.96354, 40.005910, -76.86354, 40.105910]
 roi = ee.Geometry.Rectangle(bbox_ee)
 
 print("Fetching data from multiple sources...")
@@ -135,79 +135,74 @@ except Exception as e:
     sparse_forest_patches = []
     dense_forest_patches = []
 
-# ====== 5. Create Combined Visualization ======
-print("Creating combined visualization...")
-fig, ax = plt.subplots(figsize=(15, 12))
+# ====== 5. Create Clean Map Image ======
+print("Creating clean map image...")
+
+# Get plot boundaries
+west, south, east, north = bbox_ee
+
+# Create figure with no margins, axes, or decorations
+fig = plt.figure(figsize=(12, 12), frameon=False)
+ax = fig.add_axes([0, 0, 1, 1])  # Full figure, no margins
+ax.set_xlim(west, east)
+ax.set_ylim(south, north)
+
+# Remove all axes elements
+ax.axis('off')
+ax.set_xticks([])
+ax.set_yticks([])
+
+# Set white background
+fig.patch.set_facecolor('white')
+ax.patch.set_facecolor('white')
+
+# Fill entire plot area with white to ensure no transparency
+from matplotlib.patches import Rectangle
+white_bg = Rectangle((west, south), east-west, north-south, 
+                    facecolor='white', edgecolor='none', zorder=0)
+ax.add_patch(white_bg)
 
 # Plot sparse forests first (background layer)
 if sparse_forest_patches:
     sparse_forest_collection = PatchCollection(
         sparse_forest_patches, 
-        facecolor='lightgreen', 
+        facecolor='#90EE90',  # Light green
         edgecolor='none', 
-        alpha=0.5,
-        label='Sparse forests (10-50% cover)'
+        alpha=0.6
     )
     ax.add_collection(sparse_forest_collection)
 
-# Plot dense forests (darker, on top of sparse)
+# Plot dense forests (darker green)
 if dense_forest_patches:
     dense_forest_collection = PatchCollection(
         dense_forest_patches, 
-        facecolor='darkgreen', 
+        facecolor='#006400',  # Dark green
         edgecolor='none', 
-        alpha=0.7,
-        label='Dense forests (50%+ cover)'
+        alpha=0.8
     )
     ax.add_collection(dense_forest_collection)
 
-# Plot water features
+# Plot water features (blue)
 if water_patches:
     water_collection = PatchCollection(
         water_patches, 
-        facecolor='blue', 
-        edgecolor='darkblue', 
-        alpha=0.7,
-        label='Water bodies'
+        facecolor='#0066CC',  # Blue
+        edgecolor='none', 
+        alpha=0.7
     )
     ax.add_collection(water_collection)
 
-# Plot roads on top
+# Plot roads (thin lines, high contrast)
 if roads:
     for road in roads:
         lons, lats = zip(*road)
-        ax.plot(lons, lats, color="gray", linewidth=2, alpha=0.8)
+        ax.plot(lons, lats, color="#333333", linewidth=1.0, alpha=0.9, solid_capstyle='round')
 
-# Create a dummy line for roads legend
-if roads:
-    ax.plot([], [], color="gray", linewidth=2, alpha=0.8, label='Roads')
+# Save the clean image with explicit white background
+plt.savefig('clean_combined_map.png', format='png', dpi=200, bbox_inches='tight', pad_inches=0, 
+           facecolor='white', edgecolor='white', transparent=False)
 
-# Set plot boundaries
-west, south, east, north = bbox_ee
-
-# Formatting
-ax.set_xlabel('Longitude', fontsize=12)
-ax.set_ylabel('Latitude', fontsize=12)
-ax.set_title('Combined Map: Forests, Water Bodies, and Roads\nPrinceton/Lawrence Township, NJ', fontsize=14, fontweight='bold')
-ax.grid(True, alpha=0.3)
-
-# Force axis limits after all data is plotted
-ax.set_xlim(west, east)
-ax.set_ylim(south, north)
-ax.legend(loc='upper right')
-
-# Add feature counts as text
-info_text = f"Features displayed:\n"
-info_text += f"• Roads: {len(roads)} segments\n"
-info_text += f"• Water: {len(water_patches)} polygons\n"
-info_text += f"• Sparse forests: {len(sparse_forest_patches)} polygons\n"
-info_text += f"• Dense forests: {len(dense_forest_patches)} polygons"
-
-ax.text(0.02, 0.98, info_text, transform=ax.transAxes, 
-        verticalalignment='top', fontsize=10,
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-plt.tight_layout()
 plt.show()
 
-print("Combined map visualization complete!")
+print("Clean map image saved as 'clean_combined_map.png'")
+print(f"Features displayed: Roads: {len(roads)}, Water: {len(water_patches)}, Sparse forests: {len(sparse_forest_patches)}, Dense forests: {len(dense_forest_patches)}")
