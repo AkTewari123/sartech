@@ -4,30 +4,25 @@ import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+// import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "../lib/utils";
-import { format } from "date-fns";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { CalendarIcon } from "lucide-react";
-import { Calendar } from "@/components/ui/calendar";
 
 type FormData = {
   name: string;
   hasMentalInjury: boolean;
-  age: number | "";
-  missingDuration: string;
   latitude: string;
   longitude: string;
+  locationQuery: string;
+  imageFile: FileList | null;
+  lastSeenClothing: string;
 };
 
 export default function MissingPersonForm() {
-  const [date, setDate] = useState<Date>();
-  const [dateError, setDateError] = useState<string | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any | null>(null);
+  const markerRef = useRef<any | null>(null);
 
   const {
     register,
@@ -39,44 +34,35 @@ export default function MissingPersonForm() {
     defaultValues: {
       name: "",
       hasMentalInjury: false,
-      age: "",
-      missingDuration: "",
       latitude: "",
       longitude: "",
+      locationQuery: "",
+      imageFile: null,
+      lastSeenClothing: "",
     },
   });
 
-  const mapRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<any | null>(null);
-  const markerRef = useRef<any | null>(null);
-  const autocompleteRef = useRef<any | null>(null);
-  const [mapReady, setMapReady] = useState(false);
-
   const lat = watch("latitude");
   const lng = watch("longitude");
+  const locationQuery = watch("locationQuery");
+  const apiKey = process.env.NEXT_PUBLIC_MAPS_API;
 
-  // Load Google Maps script with places library
+  // Load Google Maps JS
   useEffect(() => {
-    const key = process.env.NEXT_PUBLIC_MAPS_API;
-    if (!key) {
-      console.warn("Missing NEXT_PUBLIC_MAPS_API. Map won't load.");
-      return;
-    }
-
+    if (!apiKey) return;
     if ((window as any).google?.maps) {
       setMapReady(true);
       return;
     }
-
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
     script.async = true;
     script.defer = true;
     script.onload = () => setMapReady(true);
     document.head.appendChild(script);
-  }, []);
+  }, [apiKey]);
 
-  // Initialize map and autocomplete
+  // Initialize map
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
@@ -91,7 +77,7 @@ export default function MissingPersonForm() {
       }
     );
 
-    // Click to place marker
+    // Add click listener to place marker
     mapInstanceRef.current.addListener("click", (e: any) => {
       const pos = e.latLng;
       if (!pos) return;
@@ -101,28 +87,6 @@ export default function MissingPersonForm() {
       setValue("latitude", plat, { shouldValidate: true });
       setValue("longitude", plng, { shouldValidate: true });
     });
-
-    // Autocomplete
-    const input = document.getElementById("autocomplete") as HTMLInputElement;
-    if (input) {
-      autocompleteRef.current = new (
-        window as any
-      ).google.maps.places.Autocomplete(input);
-      autocompleteRef.current.bindTo("bounds", mapInstanceRef.current);
-      autocompleteRef.current.addListener("place_changed", () => {
-        const place = autocompleteRef.current.getPlace();
-        if (!place.geometry || !place.geometry.location) return;
-
-        const location = place.geometry.location;
-        const plat = location.lat().toFixed(6);
-        const plng = location.lng().toFixed(6);
-        mapInstanceRef.current.setCenter(location);
-        mapInstanceRef.current.setZoom(15);
-        placeMarker({ lat: parseFloat(plat), lng: parseFloat(plng) });
-        setValue("latitude", plat, { shouldValidate: true });
-        setValue("longitude", plng, { shouldValidate: true });
-      });
-    }
   }, [mapReady]);
 
   // Update marker when lat/lng typed manually
@@ -161,18 +125,59 @@ export default function MissingPersonForm() {
     }
   }
 
-  function onSubmit(data: FormData) {
-    console.log("submit payload:", {
-      ...data,
-      latitude: parseFloat(data.latitude),
-      longitude: parseFloat(data.longitude),
-    });
-    alert("Submitted — check console for payload.");
+  // Geocode locationQuery and center map
+  const goToLocation = async () => {
+    if (!locationQuery) return;
+    try {
+      const geocoder = new (window as any).google.maps.Geocoder();
+      geocoder.geocode(
+        { address: locationQuery },
+        (results: any[], status: string) => {
+          if (status === "OK" && results.length > 0) {
+            const loc = results[0].geometry.location;
+            const plat = loc.lat();
+            const plng = loc.lng();
+            setValue("latitude", plat.toFixed(6), { shouldValidate: true });
+            setValue("longitude", plng.toFixed(6), { shouldValidate: true });
+            placeMarker({ lat: plat, lng: plng });
+            mapInstanceRef.current.setCenter({ lat: plat, lng: plng });
+            mapInstanceRef.current.setZoom(15);
+          } else {
+            alert("Location not found.");
+          }
+        }
+      );
+    } catch (err) {
+      console.error("Geocode error:", err);
+      alert("Failed to find location.");
+    }
+  };
+
+  async function onSubmit(data: FormData) {
+    try {
+      const formData = new FormData();
+      formData.append("name", data.name);
+      formData.append(
+        "hasMentalInjury",
+        data.hasMentalInjury ? "true" : "false"
+      );
+      formData.append("latitude", data.latitude);
+      formData.append("longitude", data.longitude);
+      formData.append("lastSeenClothing", data.lastSeenClothing);
+
+      if (data.imageFile && data.imageFile.length > 0) {
+        formData.append("imageFile", data.imageFile[0]);
+      }
+      window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}`;
+    } catch (err) {
+      console.error(err);
+      alert("Error submitting report");
+    }
   }
 
   return (
-    <div className="h-screen flex items-center">
-      <Card className="max-w-3xl mx-auto">
+    <div className="my-2 min-h-screen flex items-center">
+      <Card className="max-w-[800px]  w-4/5 mx-auto">
         <CardHeader>
           <CardTitle>Missing Person / Last Seen Report</CardTitle>
         </CardHeader>
@@ -199,34 +204,48 @@ export default function MissingPersonForm() {
 
             <div>
               <Label className="mb-1">Search for a Location</Label>
-              <Input id="autocomplete" placeholder="Type an address or place" />
+              <div className="flex gap-2">
+                <Input
+                  {...register("locationQuery")}
+                  placeholder="Type an address or place"
+                  onSubmit={goToLocation}
+                  onKeyDown={(e) => (e.key === "Enter" ? goToLocation() : null)}
+                />
+                <Button type="button" onClick={goToLocation}>
+                  Go
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="mb-1">Latitude</Label>
-                <Input
-                  {...register("latitude", {
-                    pattern: {
-                      value: /^-?\d+(\.\d+)?$/,
-                      message: "Invalid latitude",
-                    },
-                  })}
-                  placeholder="40.7128"
-                />
+                <Input {...register("latitude")} placeholder="40.7128" />
               </div>
               <div>
                 <Label className="mb-1">Longitude</Label>
-                <Input
-                  {...register("longitude", {
-                    pattern: {
-                      value: /^-?\d+(\.\d+)?$/,
-                      message: "Invalid longitude",
-                    },
-                  })}
-                  placeholder="-74.0060"
-                />
+                <Input {...register("longitude")} placeholder="-74.0060" />
               </div>
+            </div>
+
+            {/* New fields */}
+            <div>
+              <Label className="mb-1">
+                Attach an Image of the Missing Person:{" "}
+              </Label>
+              <Input
+                type="file"
+                {...register("imageFile")}
+                accept="image/png, image/jpg, image/jpeg"
+              />
+            </div>
+
+            <div>
+              <Label className="mb-1">Last Seen Clothing / Description</Label>
+              {/* <Textarea
+                {...register("lastSeenClothing")}
+                placeholder="Describe what the person was last wearing"
+              /> */}
             </div>
 
             <div className="h-64 w-full border rounded-md overflow-hidden">
