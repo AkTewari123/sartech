@@ -1,0 +1,44 @@
+img {
+    border-radius: 10px;
+}
+
+/* Smooth transitions for all interactive elements */
+.group {
+    transition: all 0.3s ease-in-out;
+}
+
+/* Custom gradient backgrounds for cards */
+.bg-gradient-drone {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.bg-gradient-detection {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+/* Animation for detection pulse */
+@keyframes detection-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.detection-pulse {
+    animation: detection-pulse 2s ease-in-out infinite;
+}
+
+/* Hover effects for image gallery */
+.image-hover:hover {
+    transform: scale(1.05);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+}
+
+/* Glass morphism effect */
+.glass {
+    backdrop-filter: blur(16px) saturate(180%);
+    background-color: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(209, 213, 219, 0.3);
+}

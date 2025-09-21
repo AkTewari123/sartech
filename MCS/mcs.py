@@ -1,177 +1,442 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 from PIL import Image
 import random
 import time
+import requests
+import json
 from scipy.stats import gaussian_kde
+from scipy.interpolate import griddata
+import pickle
+import csv
+from numba import jit, njit
+from scipy.ndimage import map_coordinates
 
 # Configuration
-NUM_BOTS = 300  # Number of bots
-FPS = 30  # Frames per second for animation
-SPEED_RANGE = (1, 5)  # Min/max speed
-MARKER_SIZE = 5  # Size of dots (smaller due to many bots)
-ALPHA = 0.6  # Transparency of dots
-SIMULATION_TIME = 5  # Simulation duration in seconds
+NUM_BOTS = 150
+FPS = 30
+SPEED_RANGE = (1, 5)
+MARKER_SIZE = 15
+ALPHA = 0.6
+SIMULATION_TIME = 5
+ELEVATION_PREFERENCE = 0.65
+AGE_RANGE = (0.1, 1.0)
+AGE_SPEED_FACTOR = 2.0
 
-class SwarmBot:
-    def __init__(self, image_path='./sar.png'):
-        # Load and convert the SAR image
-        self.image = Image.open(image_path).convert('RGB')
-        self.width, self.height = self.image.size
+# Pre-computed terrain colors as numpy arrays
+TERRAIN_COLORS_ARRAY = np.array([
+    [144, 238, 144],  # sparse_forest
+    [0, 100, 0],      # dense_forest  
+    [0, 102, 204],    # water
+    [51, 51, 51]      # road
+]) / 255.0
+
+TERRAIN_NAMES = ['sparse_forest', 'dense_forest', 'water', 'road']
+
+@njit
+def fast_closest_terrain(pixel_rgb):
+    """Numba-optimized terrain classification"""
+    min_dist = 999.0
+    closest_idx = 0
+    
+    for i in range(4):  # 4 terrain types
+        dist = 0.0
+        for j in range(3):  # RGB channels
+            diff = pixel_rgb[j] - TERRAIN_COLORS_ARRAY[i, j]
+            dist += diff * diff
         
-        # Convert PIL image to numpy array
-        self.background = np.array(self.image)
+        if dist < min_dist:
+            min_dist = dist
+            closest_idx = i
+    
+    return closest_idx
+
+@njit
+def update_bots_vectorized(bot_positions, bot_angles, bot_speeds, bot_ages, 
+                          terrain_map, elevation_data, elevation_gradients,
+                          width, height, sensing_radius, elevation_preference):
+    """Highly optimized bot update using numba"""
+    n_bots = len(bot_positions)
+    
+    for i in range(n_bots):
+        x, y = bot_positions[i]
+        x_int = max(0, min(width - 1, int(x)))
+        y_int = max(0, min(height - 1, int(y)))
         
-        # Create the figure and axis
-        self.fig, self.ax = plt.subplots(figsize=(12, 8))
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
+        # Fast terrain sampling
+        x_min = max(0, x_int - sensing_radius)
+        x_max = min(width, x_int + sensing_radius + 1)
+        y_min = max(0, y_int - sensing_radius)  
+        y_max = min(height, y_int + sensing_radius + 1)
         
-        # Create the image display
-        self.img = self.ax.imshow(self.background)
+        # Count terrain types in sensing area
+        water_count = 0
+        road_count = 0
+        total_pixels = 0
         
-        # Initialize bot swarm with random positions, angles, and speeds
-        self.bots = []
-        center_x, center_y = self.width // 2, self.height // 2
+        for yi in range(y_min, y_max):
+            for xi in range(x_min, x_max):
+                terrain_type = terrain_map[yi, xi]
+                total_pixels += 1
+                if terrain_type == 2:  # water
+                    water_count += 1
+                elif terrain_type == 3:  # road
+                    road_count += 1
         
-        for _ in range(NUM_BOTS):
-            # Random starting position in a circle around center
-            angle = random.uniform(0, 2 * np.pi)
-            radius = random.uniform(0, min(self.width, self.height) / 4)
-            x = center_x + radius * np.cos(angle)
-            y = center_y + radius * np.sin(angle)
+        # Age-based factors
+        age_factor = bot_ages[i]
+        angle_adjust_factor = 1.0 - (age_factor * 0.3)
+        age_elev_pref = elevation_preference * (1.0 + (age_factor - 0.5) * 0.2)
+        age_elev_pref = max(0.1, min(0.9, age_elev_pref))
+        
+        # Decision making
+        angle_adjust = 0.0
+        
+        # Water edge following (simplified)
+        if water_count > 0 and water_count < total_pixels * 0.8:
+            # Follow water edge - simplified version
+            if random.random() < 0.6:
+                angle_adjust += np.random.uniform(-0.5, 0.5) * angle_adjust_factor
+                
+        # Road following
+        elif road_count > water_count:
+            angle_adjust += 0.3 * angle_adjust_factor
             
-            # Random movement parameters
-            move_angle = random.uniform(0, 2 * np.pi)
-            speed = random.uniform(*SPEED_RANGE)
+        # Elevation-based movement
+        elif random.random() < age_elev_pref:
+            grad_x = elevation_gradients[y_int, x_int, 0]
+            grad_y = elevation_gradients[y_int, x_int, 1]
             
-            # Generate colors: bright red, orange, yellow for better visibility
-            colors = [
-                [1.0, 0.0, 0.0],  # Red
-                [1.0, 0.5, 0.0],  # Orange
-                [1.0, 1.0, 0.0],  # Yellow
-            ]
-            bot = {
-                'x': x,
-                'y': y,
-                'angle': move_angle,
-                'speed': speed,
-                'color': random.choice(colors)  # Pick one of the bright colors
-            }
-            self.bots.append(bot)
+            if abs(grad_x) > 0.1 or abs(grad_y) > 0.1:
+                target_angle = np.arctan2(-grad_y, -grad_x)  # Negative for downhill
+                angle_diff = target_angle - bot_angles[i]
+                
+                # Normalize angle difference
+                while angle_diff > np.pi:
+                    angle_diff -= 2 * np.pi
+                while angle_diff < -np.pi:
+                    angle_diff += 2 * np.pi
+                    
+                angle_adjust = angle_diff * 0.3 * angle_adjust_factor
         
-        # Create scatter plot for all bots
-        colors = [bot['color'] for bot in self.bots]
-        self.dots = self.ax.scatter(
-            [bot['x'] for bot in self.bots],
-            [bot['y'] for bot in self.bots],
-            c=colors,
-            s=MARKER_SIZE,
-            alpha=ALPHA,
-            edgecolors='white',
-            linewidths=0.5
+        # Add random component
+        random_component = np.random.uniform(-0.03, 0.03) * (1.0 - age_factor * 0.5)
+        bot_angles[i] += angle_adjust + random_component
+        
+        # Move bot
+        bot_positions[i, 0] += np.cos(bot_angles[i]) * bot_speeds[i]
+        bot_positions[i, 1] += np.sin(bot_angles[i]) * bot_speeds[i]
+        
+        # Handle boundaries (wrap around)
+        if bot_positions[i, 0] < 0:
+            bot_positions[i, 0] = width + bot_positions[i, 0]
+        elif bot_positions[i, 0] >= width:
+            bot_positions[i, 0] = bot_positions[i, 0] - width
+            
+        if bot_positions[i, 1] < 0:
+            bot_positions[i, 1] = height + bot_positions[i, 1] 
+        elif bot_positions[i, 1] >= height:
+            bot_positions[i, 1] = bot_positions[i, 1] - height
+
+def fetch_elevation_data_cached(lat_center, lon_center, width_pixels, height_pixels, 
+                               resolution_meters=30, cache_file=None):
+    """Optimized elevation fetching with caching"""
+    
+    # Try to load from cache first
+    if cache_file:
+        try:
+            cached_data = np.load(cache_file, allow_pickle=True).item()
+            if (cached_data['lat_center'] == lat_center and 
+                cached_data['lon_center'] == lon_center and
+                cached_data['width'] == width_pixels and
+                cached_data['height'] == height_pixels):
+                print("Using cached elevation data")
+                return cached_data['elevation']
+        except:
+            print("No valid cache found, fetching new data")
+    
+    print("Fetching elevation data...")
+    
+    # Reduced resolution for faster fetching
+    grid_resolution = max(2, min(width_pixels, height_pixels) // 25)  # Even coarser grid
+    
+    lat_per_meter = 1 / 111000
+    lon_per_meter = 1 / (111000 * np.cos(np.radians(lat_center)))
+    
+    width_meters = width_pixels * resolution_meters
+    height_meters = height_pixels * resolution_meters
+    
+    lat_span = height_meters * lat_per_meter
+    lon_span = width_meters * lon_per_meter
+    
+    lat_min = lat_center - lat_span / 2
+    lat_max = lat_center + lat_span / 2
+    lon_min = lon_center - lon_span / 2
+    lon_max = lon_center + lon_span / 2
+    
+    lats = np.linspace(lat_max, lat_min, height_pixels // grid_resolution)
+    lons = np.linspace(lon_min, lon_max, width_pixels // grid_resolution)
+    
+    elevation_points, locations = [], []
+    for i, lat in enumerate(lats):
+        for j, lon in enumerate(lons):
+            locations.append(f"{lat},{lon}")
+            elevation_points.append((j * grid_resolution, i * grid_resolution))
+    
+    # Larger batch size for fewer API calls
+    batch_size = 200  
+    all_elevations = []
+    
+    for i in range(0, len(locations), batch_size):
+        batch = locations[i:i+batch_size]
+        url = f"https://api.open-elevation.com/api/v1/lookup?locations={'|'.join(batch)}"
+        
+        try:
+            response = requests.get(url, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                elevations = [result['elevation'] for result in data['results']]
+                all_elevations.extend(elevations)
+                print(f"Fetched batch {i//batch_size + 1}")
+                time.sleep(0.3)  # Shorter delay
+            else:
+                all_elevations.extend(np.random.uniform(0, 100, len(batch)))
+        except:
+            all_elevations.extend(np.random.uniform(0, 100, len(batch)))
+    
+    if len(all_elevations) == len(elevation_points):
+        x_coords = [pt[0] for pt in elevation_points]
+        y_coords = [pt[1] for pt in elevation_points]
+        
+        xi, yi = np.arange(width_pixels), np.arange(height_pixels)
+        xi_grid, yi_grid = np.meshgrid(xi, yi)
+        
+        elevation_grid = griddata(
+            (x_coords, y_coords),
+            all_elevations,
+            (xi_grid, yi_grid),
+            method='linear',
+            fill_value=np.mean(all_elevations)
         )
         
-        plt.tight_layout()
+        # Cache the results
+        if cache_file:
+            cache_data = {
+                'lat_center': lat_center,
+                'lon_center': lon_center,
+                'width': width_pixels,
+                'height': height_pixels,
+                'elevation': elevation_grid
+            }
+            np.save(cache_file, cache_data)
+            print(f"Cached elevation data to {cache_file}")
+        
+        print(f"Elevation range: {np.min(elevation_grid):.1f}–{np.max(elevation_grid):.1f} m")
+        return elevation_grid
     
-    def update(self, frame):
-        new_positions = [], []
+    print("Using random elevation fallback")
+    return np.random.uniform(0, 100, (height_pixels, width_pixels))
+
+class OptimizedSwarmBot:
+    def __init__(self, image_path='image.png', lat_center=40.7128, lon_center=-74.0060):
+        # Load and process image
+        self.image = Image.open(image_path).convert('RGB')
+        self.width, self.height = self.image.size
+        self.background = np.array(self.image)
         
-        for bot in self.bots:
-            # Update position based on angle and speed
-            bot['x'] += np.cos(bot['angle']) * bot['speed']
-            bot['y'] += np.sin(bot['angle']) * bot['speed']
-            
-            # Wrap around screen edges with small random angle change
-            if bot['x'] < 0 or bot['x'] >= self.width:
-                bot['x'] = bot['x'] % self.width
-                bot['angle'] = random.uniform(0, 2 * np.pi)
-            if bot['y'] < 0 or bot['y'] >= self.height:
-                bot['y'] = bot['y'] % self.height
-                bot['angle'] = random.uniform(0, 2 * np.pi)
-            
-            # Small random angle adjustments for organic movement
-            bot['angle'] += random.uniform(-0.1, 0.1)
-            
-            new_positions[0].append(bot['x'])
-            new_positions[1].append(bot['y'])
+        # Pre-classify all terrain types for faster lookup
+        print("Classifying terrain...")
+        self.terrain_map = self._classify_terrain_vectorized()
         
-        # Update all dot positions at once
-        self.dots.set_offsets(np.c_[new_positions[0], new_positions[1]])
+        # Fetch elevation with caching
+        cache_file = f"elevation_cache_{lat_center}_{lon_center}_{self.width}x{self.height}.npy"
+        self.elevation_data = fetch_elevation_data_cached(
+            lat_center, lon_center, self.width, self.height, cache_file=cache_file
+        )
         
-        return [self.dots]
+        # Pre-compute elevation gradients
+        print("Computing elevation gradients...")
+        gy, gx = np.gradient(self.elevation_data)
+        self.elevation_gradients = np.stack([gx, gy], axis=-1)
+        
+        # Initialize bots as numpy arrays for better performance
+        self.bot_positions = np.zeros((NUM_BOTS, 2))
+        self.bot_angles = np.zeros(NUM_BOTS)
+        self.bot_speeds = np.zeros(NUM_BOTS)
+        self.bot_ages = np.zeros(NUM_BOTS)
+        self.bot_colors = []
+        
+        center_x, center_y = self.width // 2, self.height // 2
+        
+        # Vectorized bot initialization
+        angles = np.random.uniform(0, 2*np.pi, NUM_BOTS)
+        radii = np.random.uniform(0, min(self.width, self.height)/4, NUM_BOTS)
+        
+        self.bot_positions[:, 0] = center_x + radii * np.cos(angles)
+        self.bot_positions[:, 1] = center_y + radii * np.sin(angles)
+        
+        self.bot_angles = np.random.uniform(0, 2*np.pi, NUM_BOTS)
+        base_speeds = np.random.uniform(*SPEED_RANGE, NUM_BOTS)
+        self.bot_ages = np.random.uniform(*AGE_RANGE, NUM_BOTS)
+        
+        speed_multipliers = AGE_SPEED_FACTOR * (1.1 - self.bot_ages)
+        self.bot_speeds = base_speeds * speed_multipliers
+        
+        # Generate colors based on age
+        for age in self.bot_ages:
+            if age < 0.4:
+                colors = [[1.0, 0.0, 0.0], [1.0, 0.5, 0.0], [1.0, 1.0, 0.0]]
+            elif age < 0.7:
+                colors = [[0.8, 0.2, 0.2], [0.8, 0.4, 0.1], [0.7, 0.7, 0.2]]
+            else:
+                colors = [[0.6, 0.3, 0.3], [0.6, 0.4, 0.2], [0.5, 0.5, 0.3]]
+            self.bot_colors.append(random.choice(colors))
+    
+    def _classify_terrain_vectorized(self):
+        """Fast vectorized terrain classification"""
+        terrain_map = np.zeros((self.height, self.width), dtype=np.uint8)
+        
+        # Process in chunks to avoid memory issues
+        chunk_size = 1000
+        background_norm = self.background.astype(np.float32) / 255.0
+        
+        for y_start in range(0, self.height, chunk_size):
+            y_end = min(y_start + chunk_size, self.height)
+            
+            for x_start in range(0, self.width, chunk_size):
+                x_end = min(x_start + chunk_size, self.width)
+                
+                chunk = background_norm[y_start:y_end, x_start:x_end]
+                
+                # Vectorized distance calculation
+                for terrain_idx in range(4):
+                    terrain_color = TERRAIN_COLORS_ARRAY[terrain_idx]
+                    distances = np.sum((chunk - terrain_color)**2, axis=2)
+                    
+                    if terrain_idx == 0:
+                        min_distances = distances
+                        terrain_map[y_start:y_end, x_start:x_end] = 0
+                    else:
+                        mask = distances < min_distances
+                        terrain_map[y_start:y_end, x_start:x_end][mask] = terrain_idx
+                        min_distances = np.minimum(min_distances, distances)
+        
+        return terrain_map
+    
+    def run_simulation(self):
+        """Optimized simulation without animation"""
+        print("Running optimized simulation...")
+        total_frames = SIMULATION_TIME * FPS
+        sensing_radius = 3
+        
+        # Progress tracking
+        progress_interval = total_frames // 10
+        
+        for frame in range(total_frames):
+            if frame % progress_interval == 0:
+                progress = (frame / total_frames) * 100
+                print(f"Progress: {progress:.1f}%")
+            
+            # Use numba-optimized update
+            update_bots_vectorized(
+                self.bot_positions, self.bot_angles, self.bot_speeds, self.bot_ages,
+                self.terrain_map, self.elevation_data, self.elevation_gradients,
+                self.width, self.height, sensing_radius, ELEVATION_PREFERENCE
+            )
+        
+        print("Simulation complete!")
+        self.create_density_map()
     
     def create_density_map(self):
-        """Create a 2D density map of bot positions"""
-        positions = np.array([[bot['x'], bot['y']] for bot in self.bots])
+        """Optimized density map creation"""
+        print("Creating analysis plots...")
         
-        # Create a regular grid to evaluate density
-        x_grid = np.linspace(0, self.width, 100)
-        y_grid = np.linspace(0, self.height, 100)
+        # Use lower resolution KDE for speed
+        x_grid = np.linspace(0, self.width, 80)  # Reduced from 100
+        y_grid = np.linspace(0, self.height, 80)
         xx, yy = np.meshgrid(x_grid, y_grid)
         grid_positions = np.vstack([xx.ravel(), yy.ravel()])
         
-        # Calculate density
-        kde = gaussian_kde(positions.T)
-        density = kde(grid_positions).reshape(100, 100)
+        # Fast KDE with automatic bandwidth
+        kde = gaussian_kde(self.bot_positions.T, bw_method='scott')
+        density = kde(grid_positions).reshape(80, 80)
         
-        # Create density plot
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+        # Create visualization
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         
-        # Original image with final bot positions
-        ax1.imshow(self.background)
-        ax1.scatter([bot['x'] for bot in self.bots], 
-                   [bot['y'] for bot in self.bots],
-                   c='red', s=MARKER_SIZE, alpha=ALPHA)
-        ax1.set_title('Final Bot Positions')
+        # Original with final positions
+        axes[0,0].imshow(self.background)
+        axes[0,0].scatter(self.bot_positions[:, 0], self.bot_positions[:, 1],
+                         c=self.bot_colors, s=MARKER_SIZE, alpha=ALPHA)
+        axes[0,0].set_title('Final Bot Positions')
+        axes[0,0].set_xticks([])
+        axes[0,0].set_yticks([])
         
         # Density map
-        im = ax2.imshow(density, extent=[0, self.width, self.height, 0],
-                       cmap='hot', interpolation='gaussian')
-        ax2.set_title('Bot Density Map')
-        plt.colorbar(im, ax=ax2, label='Density')
+        im1 = axes[0,1].imshow(density, extent=[0, self.width, self.height, 0],
+                              cmap='hot', interpolation='bilinear')
+        axes[0,1].set_title('Bot Density Map')
+        plt.colorbar(im1, ax=axes[0,1])
+        
+        # Elevation map
+        im2 = axes[1,0].imshow(self.elevation_data, extent=[0, self.width, self.height, 0],
+                              cmap='terrain', interpolation='bilinear')
+        axes[1,0].set_title('Elevation Map')
+        plt.colorbar(im2, ax=axes[1,0])
+        
+        # Combined view
+        axes[1,1].imshow(self.elevation_data, extent=[0, self.width, self.height, 0],
+                        cmap='terrain', alpha=0.7)
+        axes[1,1].scatter(self.bot_positions[:, 0], self.bot_positions[:, 1],
+                         c='red', s=MARKER_SIZE*2, alpha=0.8, edgecolors='white')
+        axes[1,1].set_title('Elevation + Final Positions')
         
         plt.tight_layout()
+        
+        # Save efficiently
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f'optimized_swarm_analysis_{timestamp}.png'
+        fig.savefig(filename, dpi=200, bbox_inches='tight')  # Reduced DPI for speed
+        print(f"Saved: {filename}")
+        
+        # Save essential data only
+        self.save_essential_data(density, x_grid, y_grid, timestamp)
+        
         plt.show()
+    
+    def save_essential_data(self, density, x_grid, y_grid, timestamp):
+        """Save only the most important data efficiently"""
+        # Just save positions and density - skip redundant formats
+        positions_file = f'positions_{timestamp}.csv'
+        with open(positions_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['x', 'y', 'age', 'speed'])
+            for i in range(NUM_BOTS):
+                writer.writerow([self.bot_positions[i, 0], self.bot_positions[i, 1], 
+                               self.bot_ages[i], self.bot_speeds[i]])
+        
+        # Save density as compressed numpy array
+        np.savez_compressed(f'density_{timestamp}.npz', 
+                           density=density, x_grid=x_grid, y_grid=y_grid)
+        
+        print(f"Essential data saved with timestamp: {timestamp}")
 
-    def animate(self):
-        # Create the animation with frame limit for 30 seconds
-        total_frames = SIMULATION_TIME * FPS
-        frame_count = 0
+if __name__ == "__main__":
+    try:
+        print(f"Starting optimized simulation with {NUM_BOTS} bots")
+        print(f"Image processing and simulation for {SIMULATION_TIME} seconds...")
         
-        def animation_update(frame):
-            nonlocal frame_count
-            frame_count += 1
-            result = self.update(frame)
-            
-            # Stop after 30 seconds
-            if frame_count >= total_frames:
-                plt.close()
-                self.create_density_map()
-            
-            return result
+        swarm = OptimizedSwarmBot('image.png', lat_center=40.7128, lon_center=-74.0060)
+        print(f"Image size: {swarm.width}x{swarm.height}")
         
-        # Create the animation
-        anim = FuncAnimation(
-            self.fig,
-            animation_update,
-            frames=None,
-            interval=1000/FPS,
-            blit=True
-        )
+        # Run simulation
+        start_time = time.time()
+        swarm.run_simulation()
+        end_time = time.time()
         
-        # Show the animation
-        plt.show()
-
-# Create and run the animation
-try:
-    swarm = SwarmBot('./sar.png')
-    print(f"Image size: {swarm.width}x{swarm.height} pixels")
-    print(f"Created swarm of {NUM_BOTS} bots")
-    print(f"Running simulation for {SIMULATION_TIME} seconds...")
-    swarm.animate()
-except KeyboardInterrupt:
-    print("\nAnimation stopped by user")
-except Exception as e:
-    print(f"Error: {e}")
+        print(f"Total execution time: {end_time - start_time:.2f} seconds")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
