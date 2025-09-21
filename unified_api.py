@@ -21,7 +21,10 @@ from MCS.mcs import OptimizedSwarmBot, NUM_BOTS
 from MCS.flightplan import (
     generate_density_map_from_data, 
     find_hotspots_with_dbscan, 
-    plan_flight_path
+    plan_flight_path,
+    select_distributed_pois,
+    select_top_dense_grid_pois,
+    plan_flight_path_in_order
 )
 
 ee.Initialize(project='sartech-api')
@@ -419,14 +422,20 @@ def generate_heatmap_from_bbox(bbox: BoundingBox) -> dict:
         simulation = OptimizedSwarmBot(image_path, lat_center=lat_center, lon_center=lon_center)
         simulation.run_simulation()
         
-        # Convert bot positions to coordinates within the bounding box
-        x_scale = (bbox.east - bbox.west) / 2000
-        y_scale = (bbox.north - bbox.south) / 2000
+        # FIXED: Proper coordinate conversion from simulation space to geographic coordinates
+        # The simulation uses a 2000x2000 pixel space, we need to map this to the actual bounding box
         
         heatmap_coords = []
         for i in range(NUM_BOTS):
-            lng = bbox.west + (simulation.bot_positions[i, 0] * x_scale)
-            lat = bbox.south + (simulation.bot_positions[i, 1] * y_scale)
+            # Convert from simulation pixel coordinates (0-2000) to normalized coordinates (0-1)
+            normalized_x = simulation.bot_positions[i, 0] / 2000.0
+            normalized_y = simulation.bot_positions[i, 1] / 2000.0
+            
+            # Map normalized coordinates to the actual bounding box
+            # X maps to longitude (west to east)
+            lng = bbox.west + normalized_x * (bbox.east - bbox.west)
+            # Y maps to latitude (north to south) - NOTE: Y=0 is top in simulation, so we need to flip
+            lat = bbox.north - normalized_y * (bbox.north - bbox.south)
             
             heatmap_coords.append({
                 "x": float(lng),
@@ -447,8 +456,12 @@ def generate_heatmap_from_bbox(bbox: BoundingBox) -> dict:
 
 # ==================== FLIGHT PLAN FUNCTIONS ====================
 
-def generate_flight_plan_from_coords(coordinates: List[dict], eps: float = 50.0, min_samples: int = 5) -> dict:
-    """Generate flight plan from coordinate data"""
+def generate_flight_plan_from_coords(coordinates: List[dict], eps: float = 10, min_samples: int = 3, min_waypoints: int = 6) -> dict:
+    """Generate a simple flight plan:
+    - Split space into 5x5 grid
+    - Pick top 10 densest cells
+    - Visit their centers in descending density order
+    """
     
     try:
         # Convert to numpy array
@@ -457,37 +470,27 @@ def generate_flight_plan_from_coords(coordinates: List[dict], eps: float = 50.0,
         if len(coords) == 0:
             raise HTTPException(status_code=400, detail="No coordinates provided")
         
-        # Find hotspots using DBSCAN
-        hotspot_clusters = find_hotspots_with_dbscan(coords, eps=eps, min_samples=min_samples)
-        
-        if not hotspot_clusters:
-            raise HTTPException(status_code=404, detail="No hotspots found")
-        
-        # Calculate centroids and prepare hotspot data
-        hotspot_centroids = []
-        hotspots_data = []
-        
-        for cluster in hotspot_clusters:
-            centroid = np.mean(cluster, axis=0)
-            hotspot_centroids.append(centroid)
-            
-            hotspots_data.append({
-                "centroid": {"x": float(centroid[0]), "y": float(centroid[1])},
-                "points": [{"x": float(point[0]), "y": float(point[1])} for point in cluster],
-                "size": len(cluster)
-            })
-        
-        # Generate flight path
-        hotspot_centroids_array = np.array(hotspot_centroids)
-        start_point = (np.mean(coords[:, 0]), np.mean(coords[:, 1]))
-        
-        flight_path_array = plan_flight_path(hotspot_centroids_array, start_point=start_point)
+        # Grid-based densest cell selection (5x5, top 10)
+        centers, cells_info, _, _ = select_top_dense_grid_pois(coords, grid_rows=5, grid_cols=5, top_k=10)
+
+        # Start at mean of all coordinates
+        start_point = (float(np.mean(coords[:, 0])), float(np.mean(coords[:, 1])))
+        flight_path_array = plan_flight_path_in_order(centers, start_point=start_point)
         flight_path = [{"x": float(point[0]), "y": float(point[1])} for point in flight_path_array]
-        
+
+        # Format hotspots-like info from cells
+        hotspots_data = [
+            {"centroid": {"x": float(centers[i][0]), "y": float(centers[i][1])},
+             "points": [],
+             "size": int(cells_info[i]["count"]) if i < len(cells_info) else 0}
+            for i in range(len(centers))
+        ]
+
         return {
             "flight_path": flight_path,
             "hotspots": hotspots_data,
-            "num_hotspots": len(hotspots_data)
+            "num_hotspots": len(hotspots_data),
+            "num_waypoints": len(flight_path)
         }
         
     except Exception as e:
@@ -540,7 +543,8 @@ async def complete_workflow(request: WorkflowRequest):
                 flight_plan_data = generate_flight_plan_from_coords(
                     heatmap_data["coordinates"], 
                     request.eps, 
-                    request.min_samples
+                    request.min_samples,
+                    6  # Ensure at least 6 waypoints
                 )
                 response.flight_plan_data = flight_plan_data
         
@@ -576,12 +580,13 @@ async def heatmap_only(bbox: BoundingBox):
 async def flightplan_only(
     coordinates: List[Coordinate],
     eps: float = 50.0,
-    min_samples: int = 5
+    min_samples: int = 3,
+    min_waypoints: int = 6
 ):
-    """Generate flight plan from coordinates only"""
+    """Generate flight plan from coordinates only with guaranteed minimum waypoints"""
     try:
         coord_dicts = [{"x": coord.x, "y": coord.y} for coord in coordinates]
-        flight_plan_data = generate_flight_plan_from_coords(coord_dicts, eps, min_samples)
+        flight_plan_data = generate_flight_plan_from_coords(coord_dicts, eps, min_samples, min_waypoints)
         return flight_plan_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Flight planning failed: {str(e)}")

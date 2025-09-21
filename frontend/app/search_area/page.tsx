@@ -35,14 +35,17 @@ export default function SearchArea() {
 
   // New workflow state
   const [workflowStep, setWorkflowStep] = useState<
-    "segmentation" | "heatmap" | "complete"
+    "segmentation" | "heatmap" | "flightpath" | "complete"
   >("segmentation");
   const [heatmapData, setHeatmapData] = useState<any>(null);
   const [heatmapOverlay, setHeatmapOverlay] = useState<any>(null);
-  const [currentView, setCurrentView] = useState<"segmentation" | "heatmap">(
+  const [flightPathData, setFlightPathData] = useState<any>(null);
+  const [flightPathOverlay, setFlightPathOverlay] = useState<any>(null);
+  const [currentView, setCurrentView] = useState<"segmentation" | "heatmap" | "flightpath">(
     "segmentation"
   );
   const [terrainAnalysisComplete, setTerrainAnalysisComplete] = useState(false);
+  const [heatmapComplete, setHeatmapComplete] = useState(false);
 
   const animationRef = useRef<{ active: boolean; timeouts: NodeJS.Timeout[] }>({
     active: false,
@@ -488,7 +491,7 @@ export default function SearchArea() {
           })`
         );
         setCurrentAnimationStep(currentStep + 1);
-        setAnimationProgress(currentStep + 1);
+        setAnimationProgress(((currentStep + 1) / availableLayers.length) * 100);
 
         // Smooth fade-in animation
         let opacity = 0;
@@ -824,11 +827,72 @@ export default function SearchArea() {
       if (data.heatmap_data) {
         await displayHeatmap(data.heatmap_data);
         setCurrentView("heatmap"); // Switch to heatmap view after generation
-        setWorkflowStep("complete");
+        setHeatmapComplete(true);
+        setWorkflowStep("heatmap"); // Stay in heatmap step, not complete yet
       }
     } catch (error) {
       console.error("Error generating heatmap:", error);
       setWorkflowStep("segmentation"); // Reset on error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Generate flight path after heatmap
+  const generateFlightPath = async () => {
+    if (!boundingBox || !heatmapData) {
+      console.error("No bounding box or heatmap data available for flight path generation");
+      return;
+    }
+
+    setWorkflowStep("flightpath");
+    setLoading(true);
+
+    try {
+      console.log("Generating flight path with heatmap coordinates:", heatmapData.coordinates?.length);
+
+      // Format coordinates for the API (ensure they have x, y structure)
+      const formattedCoordinates = heatmapData.coordinates.map((coord: any) => ({
+        x: coord.x || coord.lng || coord.longitude,
+        y: coord.y || coord.lat || coord.latitude
+      }));
+
+      console.log("Formatted coordinates sample:", formattedCoordinates.slice(0, 3));
+
+      // Call the direct flightplan endpoint with existing heatmap coordinates
+      const response = await fetch("http://localhost:8000/flightplan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formattedCoordinates),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Flight plan API error:", response.status, errorText);
+        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+      }
+
+      const flightPlanData = await response.json();
+      console.log("Flight path data received:", flightPlanData);
+      console.log("Flight path waypoints:", flightPlanData.flight_path?.length || 0);
+      console.log("Hotspots found:", flightPlanData.num_hotspots || 0);
+
+      setFlightPathData(flightPlanData);
+
+      // Display flight path - use flight_path instead of waypoints
+      if (flightPlanData && flightPlanData.flight_path && flightPlanData.flight_path.length > 0) {
+        await displayFlightPath(flightPlanData);
+        setCurrentView("flightpath"); // Switch to flight path view after generation
+        setWorkflowStep("complete");
+      } else {
+        console.error("No flight path in response data:", flightPlanData);
+        alert("Flight path generation failed: No flight path generated. Check if heatmap has enough data points.");
+      }
+    } catch (error) {
+      console.error("Error generating flight path:", error);
+      setWorkflowStep("heatmap"); // Reset to heatmap step on error
     } finally {
       setLoading(false);
     }
@@ -842,24 +906,39 @@ export default function SearchArea() {
       heatmapData.coordinates.length,
       "points"
     );
-    setWorkflowStep("heatmap");
 
     // Clear existing heatmap
     if (heatmapOverlay) {
       heatmapOverlay.setMap(null);
     }
 
-    // Create heatmap points
-    const heatmapPoints = heatmapData.coordinates.map((coord: any) => ({
-      location: new window.google.maps.LatLng(coord.y, coord.x), // lat, lng
-      weight: coord.intensity || 1,
-    }));
+    // FIXED: Ensure coordinates are properly interpreted
+    const heatmapPoints = heatmapData.coordinates.map((coord: any) => {
+      // Make sure we're using the correct coordinate order: lat, lng
+      const lat = coord.y || coord.lat;
+      const lng = coord.x || coord.lng;
+      
+      // Validate coordinates are within expected bounds
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        console.warn("Invalid coordinates detected:", { lat, lng });
+        return null;
+      }
+      
+      return {
+        location: new window.google.maps.LatLng(lat, lng),
+        weight: coord.intensity || 1,
+      };
+    }).filter(point => point !== null); // Remove invalid points
+
+    console.log("Processed heatmap points:", heatmapPoints.length);
+    console.log("Sample coordinates:", heatmapPoints.slice(0, 3));
 
     const heatmap = new window.google.maps.visualization.HeatmapLayer({
       data: heatmapPoints,
       map: mapInstance,
       radius: 20,
       opacity: 0.8,
+      dissipating: true, // IMPORTANT: This prevents the heatmap from changing on zoom
       gradient: [
         "rgba(255, 255, 255, 0)", // Transparent white (no data)
         "rgba(255, 255, 255, 0.1)", // Very faint white
@@ -876,6 +955,80 @@ export default function SearchArea() {
     });
 
     setHeatmapOverlay(heatmap);
+  };
+
+
+  const displayFlightPath = async (flightPlanData: any) => {
+    if (!mapInstance || !flightPlanData?.flight_path) return;
+
+    console.log(
+      "Displaying flight path with",
+      flightPlanData.flight_path.length,
+      "waypoints"
+    );
+
+    // Clear existing flight path
+    if (flightPathOverlay) {
+      if (Array.isArray(flightPathOverlay)) {
+        flightPathOverlay.forEach((overlay) => overlay.setMap(null));
+      } else {
+        flightPathOverlay.setMap(null);
+      }
+    }
+
+    const overlays = [];
+
+    // FIXED: Ensure consistent coordinate interpretation
+    const pathCoordinates = flightPlanData.flight_path.map((waypoint: any) => {
+      const lat = waypoint.y || waypoint.lat;
+      const lng = waypoint.x || waypoint.lng || waypoint.lon;
+      
+      // Validate coordinates
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        console.warn("Invalid flight path coordinates:", { lat, lng });
+        return null;
+      }
+      
+      return { lat, lng };
+    }).filter(coord => coord !== null);
+
+    console.log("Flight path coordinates:", pathCoordinates);
+
+    if (pathCoordinates.length === 0) {
+      console.error("No valid flight path coordinates");
+      return;
+    }
+
+    const flightPath = new window.google.maps.Polyline({
+      path: pathCoordinates,
+      geodesic: true,
+      strokeColor: "#FF0000",
+      strokeOpacity: 1.0,
+      strokeWeight: 3,
+    });
+
+    flightPath.setMap(mapInstance);
+    overlays.push(flightPath);
+
+    // Add waypoint markers
+    pathCoordinates.forEach((coord, index) => {
+      const marker = new window.google.maps.Marker({
+        position: coord,
+        map: mapInstance,
+        title: `Waypoint ${index + 1}`,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: index === 0 ? "#00FF00" : index === pathCoordinates.length - 1 ? "#FF0000" : "#0000FF",
+          fillOpacity: 0.8,
+          strokeColor: "#FFFFFF",
+          strokeWeight: 2,
+          scale: 8,
+        },
+      });
+      overlays.push(marker);
+    });
+
+    setFlightPathOverlay(overlays);
   };
 
   const switchToSegmentationView = () => {
@@ -896,6 +1049,73 @@ export default function SearchArea() {
     Object.values(animatedLayers).forEach((overlay: any) => {
       if (overlay) overlay.setMap(null);
     });
+
+    // Show heatmap
+    if (heatmapOverlay && mapInstance) {
+      heatmapOverlay.setMap(mapInstance);
+    }
+
+    setCurrentView("heatmap");
+  };
+
+  const switchToFlightPathView = () => {
+    // Hide segmentation layers
+    Object.values(animatedLayers).forEach((overlay: any) => {
+      if (overlay) overlay.setMap(null);
+    });
+
+    // Hide heatmap
+    if (heatmapOverlay) {
+      heatmapOverlay.setMap(null);
+    }
+
+    // Show flight path
+    if (flightPathOverlay && mapInstance) {
+      if (Array.isArray(flightPathOverlay)) {
+        flightPathOverlay.forEach((overlay) => overlay.setMap(mapInstance));
+      } else {
+        flightPathOverlay.setMap(mapInstance);
+      }
+    }
+
+    setCurrentView("flightpath");
+  };
+
+  // Update existing switch functions to handle flight path
+  const switchToSegmentationViewUpdated = () => {
+    if (heatmapOverlay) {
+      heatmapOverlay.setMap(null);
+    }
+    if (flightPathOverlay) {
+      if (Array.isArray(flightPathOverlay)) {
+        flightPathOverlay.forEach((overlay) => overlay.setMap(null));
+      } else {
+        flightPathOverlay.setMap(null);
+      }
+    }
+
+    // Show segmentation layers
+    Object.values(animatedLayers).forEach((overlay: any) => {
+      if (overlay) overlay.setMap(mapInstance);
+    });
+
+    setCurrentView("segmentation");
+  };
+
+  const switchToHeatmapViewUpdated = () => {
+    // Hide segmentation layers
+    Object.values(animatedLayers).forEach((overlay: any) => {
+      if (overlay) overlay.setMap(null);
+    });
+
+    // Hide flight path
+    if (flightPathOverlay) {
+      if (Array.isArray(flightPathOverlay)) {
+        flightPathOverlay.forEach((overlay) => overlay.setMap(null));
+      } else {
+        flightPathOverlay.setMap(null);
+      }
+    }
 
     // Show heatmap
     if (heatmapOverlay && mapInstance) {
@@ -1143,12 +1363,14 @@ export default function SearchArea() {
                     {workflowStep === "segmentation" &&
                       "Processing Satellite Data"}
                     {workflowStep === "heatmap" && "Generating Heat Map"}
+                    {workflowStep === "flightpath" && "Planning Flight Path"}
                     {workflowStep === "complete" && "Analysis Complete"}
                   </div>
                   <div className="text-xs text-gray-500">
                     {workflowStep === "segmentation" &&
                       "Identifying terrain features"}
                     {workflowStep === "heatmap" && "Computing probabilities"}
+                    {workflowStep === "flightpath" && "Optimizing waypoints"}
                     {workflowStep === "complete" && "Ready for operations"}
                   </div>
                 </div>
@@ -1190,6 +1412,49 @@ export default function SearchArea() {
                     <div className="flex items-center space-x-2">
                       <div className="w-4 h-2 bg-red-600 rounded"></div>
                       <span className="text-gray-600">High</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          {/* Flight Path Info */}
+          {flightPathData &&
+            workflowStep === "complete" &&
+            currentView === "flightpath" && (
+              <div className="text-xs p-2 bg-red-50 border border-red-200 rounded">
+                <p className="font-medium text-red-700 mb-1">
+                  Drone Flight Plan
+                </p>
+                <p className="text-red-600">
+                  Waypoints: {flightPathData.flight_path?.length || 0}
+                </p>
+                <p className="text-red-600">
+                  Hotspots: {flightPathData.num_hotspots || 0}
+                </p>
+                <p className="text-red-600 mb-2">Flight Time: {flightPathData.estimated_time || "Calculated based on waypoints"}</p>
+
+                {/* Flight Path Legend */}
+                <div className="border-t border-red-200 pt-2">
+                  <p className="font-medium text-red-700 mb-1">
+                    Flight Elements
+                  </p>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-2 bg-green-500 rounded-full"></div>
+                      <span className="text-gray-600">Start Point</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-2 bg-blue-500 rounded-full"></div>
+                      <span className="text-gray-600">Waypoints</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-2 bg-red-500 rounded-full"></div>
+                      <span className="text-gray-600">End Point</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-1 bg-red-600 rounded"></div>
+                      <span className="text-gray-600">Flight Path</span>
                     </div>
                   </div>
                 </div>
@@ -1251,6 +1516,14 @@ export default function SearchArea() {
               >
                 Continue to Heatmap
               </button>
+            ) : heatmapComplete && !flightPathData ? (
+              <button
+                className="w-full bg-black hover:bg-gray-800 text-white px-4 py-2 rounded font-medium transition-colors duration-200"
+                onClick={generateFlightPath}
+                disabled={loading}
+              >
+                Generate Flight Path
+              </button>
             ) : boundingBox &&
               !loading &&
               !Object.keys(animatedLayers).length ? (
@@ -1263,28 +1536,38 @@ export default function SearchArea() {
             ) : null}
           </div>
 
-          {/* View Navigation Controls - Only show when heatmap is complete */}
-          {workflowStep === "complete" && heatmapData && (
+          {/* View Navigation Controls - Only show when all analysis is complete */}
+          {workflowStep === "complete" && heatmapData && flightPathData && (
             <div className="flex space-x-2">
               <button
-                onClick={switchToSegmentationView}
+                onClick={switchToSegmentationViewUpdated}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors duration-200 ${
                   currentView === "segmentation"
                     ? "bg-black text-white"
                     : "bg-white text-black border border-gray-300 hover:bg-gray-100"
                 }`}
               >
-                Terrain Layers
+                Terrain
               </button>
               <button
-                onClick={switchToHeatmapView}
+                onClick={switchToHeatmapViewUpdated}
                 className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors duration-200 ${
                   currentView === "heatmap"
                     ? "bg-black text-white"
                     : "bg-white text-black border border-gray-300 hover:bg-gray-100"
                 }`}
               >
-                Search Heatmap
+                Heatmap
+              </button>
+              <button
+                onClick={switchToFlightPathView}
+                className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors duration-200 ${
+                  currentView === "flightpath"
+                    ? "bg-black text-white"
+                    : "bg-white text-black border border-gray-300 hover:bg-gray-100"
+                }`}
+              >
+                Flight Path
               </button>
             </div>
           )}
