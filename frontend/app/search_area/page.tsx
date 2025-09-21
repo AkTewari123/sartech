@@ -1125,7 +1125,7 @@ export default function SearchArea() {
 
     setCurrentView("heatmap");
   };
-
+  const [mounted, setMounted] = useState(false)
   // Initialize Google Map
   useEffect(() => {
     if (!apiKey) return;
@@ -1158,6 +1158,7 @@ export default function SearchArea() {
       // @ts-ignore
       window.initSearchMap = initMap;
       document.body.appendChild(script);
+      setMounted(true)
     } else {
       // @ts-ignore
       if (window.google && window.google.maps) {
@@ -1218,7 +1219,7 @@ export default function SearchArea() {
     }
   }, [animatedLayers, hasAutoStarted]);
 
-  return (
+  return mounted && (
     <div className="relative w-full h-screen m-0 p-0">
       <div id="search-map" style={{ width: "100%", height: "100%" }} />
 
