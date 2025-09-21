@@ -1,3 +1,6 @@
+import base64
+import io
+import uuid
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from datetime import datetime
@@ -32,7 +35,7 @@ def init_session():
     description = data.get("description", "NO DATA")
 
     # Generate numeric ID using timestamp in milliseconds
-    new_id = int(datetime.utcnow().timestamp() * 1000)
+    new_id = data.get("id", 12345678)
 
     # Check if this numeric ID already exists (very unlikely)
     existing = supabase.table("Raspberry Pi Sessions").select("*").eq("id", new_id).execute()
@@ -41,20 +44,70 @@ def init_session():
 
     new_row = {
         "id": new_id,
-        "location": location,
+        "latitude": location[0],
+        "longitude": location[1],
         "name": name,
         "description": description,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now().isoformat(),
         "resolved": False
     }
 
     response = supabase.table("Raspberry Pi Sessions").insert(new_row).execute()
 
-    if response.error:
+    if hasattr(response, "error"):
         return jsonify({"error": str(response.error)}), 500
 
     return jsonify(response.data[0]), 201
+@app.route("/upload_image", methods=["POST"])
+def upload_image():
+    data = request.json or {}
 
+    bucket = data.get("bucket")
+    image_base64 = data.get("image_base64")
+    name = data.get("filename")
+
+    if bucket not in ["pi-bucket", "base_comparison"]:
+        return jsonify({"error": "Invalid bucket name"}), 400
+
+    if not image_base64 or not name:
+        return jsonify({"error": "Missing image_base64 or filename"}), 400
+
+    filename = f"{name}.jpg"
+    content_type = "image/jpeg"
+
+    try:
+        # Remove base64 prefix if present
+        if "," in image_base64:
+            header, image_base64 = image_base64.split(",", 1)
+            if "png" in header:
+                filename = f"{name}.png"
+                content_type = "image/png"
+
+        # ✅ Direct bytes
+        image_bytes = base64.b64decode(image_base64)
+
+        # Upload directly as bytes
+        res = supabase.storage.from_(bucket).upload(
+            path=filename,
+            file=image_bytes,                       # <- raw bytes are valid here
+            file_options={"content-type": content_type}
+        )
+
+        if hasattr(res, "error") and res.error:
+            return jsonify({"error": str(res.error)}), 500
+
+        public_url = supabase.storage.from_(bucket).get_public_url(filename)
+
+        return jsonify({
+            "message": "Upload successful",
+            "bucket": bucket,
+            "filename": filename,
+            "public_url": public_url
+        }), 201
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({"error": str(e)}), 500
 # -----------------------------
 # Run server
 # -----------------------------

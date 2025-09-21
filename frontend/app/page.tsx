@@ -125,7 +125,23 @@ export default function MissingPersonForm() {
       });
     }
   }
+  const [imageBase64, setImageBase64] = useState("");
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      // Narrow type: ensure it's a string
+      if (typeof reader.result === "string") {
+        setImageBase64(reader.result);
+      } else {
+        console.error("Unexpected file result type:", typeof reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
   // Geocode locationQuery and center map
   const goToLocation = async () => {
     if (!locationQuery) return;
@@ -153,14 +169,26 @@ export default function MissingPersonForm() {
       alert("Failed to find location.");
     }
   };
+  function generateEightDigitInt() {
+    // Generate a random number between 10,000,000 (inclusive) and 99,999,999 (inclusive)
+    const min = 10000000; // Smallest 8-digit number
+    const max = 99999999; // Largest 8-digit number
 
+    // Math.random() generates a float between 0 (inclusive) and 1 (exclusive)
+    // Multiply by (max - min + 1) to get a range of values
+    // Add min to shift the range to start from min
+    // Math.floor() rounds down to the nearest whole number
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
   async function onSubmit(data: FormData) {
     try {
+      const EIGHT_DIGIT = generateEightDigitInt();
       // Construct JSON payload
       const payload = {
         name: data.name,
         location: [parseFloat(data.latitude), parseFloat(data.longitude)],
         description: data.lastSeenClothing,
+        id: EIGHT_DIGIT,
       };
 
       // Send POST request to Flask server
@@ -182,8 +210,18 @@ export default function MissingPersonForm() {
       const result = await response.json();
       console.log("Session created:", result);
 
+      // Upload image
+      await fetch("http://127.0.0.1:5500/upload_image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: EIGHT_DIGIT,
+          bucket: "base_comparison", // or "base_comparison"
+          image_base64: imageBase64,
+        }),
+      });
       // Redirect after success
-      window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}`;
+      // window.location.href = `/search_area?lat=${data.latitude}&lng=${data.longitude}`;
     } catch (err) {
       console.error(err);
       alert("Error submitting report");
@@ -252,6 +290,8 @@ export default function MissingPersonForm() {
                 type="file"
                 {...register("imageFile")}
                 accept="image/png, image/jpg, image/jpeg"
+                id="base_image_upload"
+                onChange={handleImageUpload}
               />
             </div>
 
