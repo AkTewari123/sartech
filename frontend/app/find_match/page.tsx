@@ -6,6 +6,8 @@ import Image from "next/image";
 import { OrbitProgress } from "react-loading-indicators";
 import { createClient } from "@supabase/supabase-js";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -180,80 +182,169 @@ const HomePage: React.FC = () => {
   }, [submittedImg]);
   if (submittedImg === null)
     return (
-      <>
-        <div className="h-screen flex items-center justify-center">
-          <OrbitProgress color="#3391EE" size="medium" />
-        </div>
-      </>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <Card className="backdrop-blur-sm bg-white/90 shadow-xl border-0 p-8">
+          <CardContent className="flex flex-col items-center space-y-6">
+            <OrbitProgress color="#3391EE" size="medium" />
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-semibold text-gray-800">Initializing Search</h2>
+              <p className="text-gray-600">Loading missing person data and connecting to drone network...</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   return (
-    <>
-      <div className="p-4">
-        <div className="m-2 border-gray-400 border p-2 rounded-lg">
-          <div className="text-center">
-            <h1 className=" text-3xl">Drone Image Viewer</h1>
-            <p className="text-gray-600 max-w-[330px] mb-4 mx-auto">
-              As the drone takes more and more images of different entities,
-              they will appear here.
-            </p>
-          </div>
-          <h3 className="text-center font-bold">Missing Person Image:</h3>
-          <div className="w-full flex justify-center">
-            <div className="mx-auto inline-block">
-              {submittedImg ? (
-                <Image
-                  src={submittedImg}
-                  height={200}
-                  width={200}
-                  alt="Submitted"
-                  style={{ maxWidth: "100%" }}
-                />
-              ) : (
-                <p>No submitted image found.</p>
-              )}
-            </div>
-          </div>
-          <div className="text-center mt-4 ">
-            <h3 className="font-bold text-2xl">
-              Below Are Entities the Drone Took Pictures of
-            </h3>
-            <p className="text-sm">
-              Green borders = Gemini thinks the target has been found!
-            </p>
-            <div className="flex items-center justify-center flex-col">
-              <div className="flex flex-row flex-wrap gap-2">
-                {droneImages.length === 0 ? (
-                  <Skeleton className="h-[150px] bg-black/80 w-[150px] rounded-lg" />
-                ) : (
-                  droneImages.map((img, idx) => (
-                    <img
-                      key={img.src}
-                      src={img.src}
-                      alt={`Drone image ${idx}`}
-                      style={{
-                        border:
-                          img.isMatch === 1
-                            ? "3px solid green"
-                            : img.isMatch === 2
-                            ? "3px solid red"
-                            : "none",
-                        maxWidth: "150px",
-                      }}
-                    />
-                  ))
-                )}
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        <Card className="backdrop-blur-sm bg-white/90 shadow-xl border-0">
+          <CardHeader className="text-center space-y-4">
+            <CardTitle className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              Real-Time Drone Surveillance
+            </CardTitle>
+            <CardDescription className="text-lg text-gray-600 max-w-2xl mx-auto">
+              Monitor live drone feeds and AI-powered facial recognition to locate missing persons in real-time
+            </CardDescription>
+          </CardHeader>
+          
+          <CardContent className="space-y-8">
+            {/* Missing Person Section */}
+            <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+              <CardHeader>
+                <CardTitle className="text-xl text-center text-blue-800">
+                  Missing Person Profile
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex justify-center">
+                <div className="relative">
+                  {submittedImg ? (
+                    <div className="relative group">
+                      <Image
+                        src={submittedImg}
+                        height={250}
+                        width={250}
+                        alt="Missing Person"
+                        className="rounded-xl shadow-lg object-cover border-4 border-blue-200 transition-transform group-hover:scale-105"
+                        style={{ aspectRatio: "1/1" }}
+                      />
+                      <div className="absolute inset-0 rounded-xl bg-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  ) : (
+                    <div className="w-[250px] h-[250px] bg-gray-200 rounded-xl flex items-center justify-center">
+                      <p className="text-gray-500">No image available</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Drone Surveillance Section */}
+            <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+              <CardHeader>
+                <CardTitle className="text-xl text-center text-purple-800">
+                  Live Drone Feed Analysis
+                </CardTitle>
+                <CardDescription className="text-center text-purple-600">
+                  <Badge variant="success" className="mr-2">LIVE</Badge>
+                  AI analyzing drone footage for potential matches
+                </CardDescription>
+              </CardHeader>
+              
+              <CardContent>
+                <div className="flex justify-center">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-4xl">
+                  {droneImages.length === 0 ? (
+                    Array.from({ length: 8 }).map((_, idx) => (
+                      <div key={idx} className="relative">
+                        <Skeleton className="h-[150px] w-full rounded-lg bg-gradient-to-br from-gray-200 to-gray-300" />
+                        <div className="absolute bottom-2 right-2">
+                          <Badge variant="secondary" className="text-xs">
+                            Loading...
+                          </Badge>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    droneImages.map((img, idx) => (
+                      <div key={img.src} className="relative group">
+                        <div className="relative overflow-hidden rounded-lg">
+                          <img
+                            src={img.src}
+                            alt={`Drone capture ${idx + 1}`}
+                            className="w-full h-[150px] object-cover transition-all duration-300 group-hover:scale-110"
+                          />
+                          {img.isMatch === 1 && (
+                            <div className="absolute inset-0 bg-green-500/30 border-4 border-green-500 rounded-lg animate-pulse" />
+                          )}
+                          {img.isMatch === 2 && (
+                            <div className="absolute inset-0 bg-red-500/10 border-2 border-red-300 rounded-lg" />
+                          )}
+                        </div>
+                        
+                        {/* Status Badge */}
+                        <div className="absolute top-2 right-2">
+                          {img.isMatch === 1 && (
+                            <Badge variant="success" className="shadow-lg">
+                              MATCH!
+                            </Badge>
+                          )}
+                          {img.isMatch === 2 && (
+                            <Badge variant="secondary" className="shadow-lg">
+                              No Match
+                            </Badge>
+                          )}
+                          {img.isMatch === null && (
+                            <Badge variant="warning" className="shadow-lg">
+                              Analyzing...
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        {/* Image number */}
+                        <div className="absolute bottom-2 left-2">
+                          <Badge variant="outline" className="bg-black/50 text-white border-white/20">
+                            #{idx + 1}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-              <div></div>
-              <ul>
-                {seenTimestamps.map((t) => (
-                  <li key={t}>{t}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
+              </CardContent>
+            </Card>
+
+            {/* Detection Results Section */}
+            {seenTimestamps.length > 0 && (
+              <Card className="bg-gradient-to-r from-green-50 to-emerald-50 border-green-200">
+                <CardHeader>
+                  <CardTitle className="text-xl text-center text-green-800 flex items-center justify-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                    </span>
+                    Detection Results
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {seenTimestamps.map((timestamp, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-3 p-3 bg-white/60 rounded-lg border border-green-200"
+                      >
+                        <Badge variant="success">DETECTED</Badge>
+                        <p className="text-green-800 font-medium">{timestamp}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </CardContent>
+        </Card>
       </div>
-    </>
+    </div>
   );
 };
 
