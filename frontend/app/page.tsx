@@ -1,5 +1,4 @@
 "use client";
-import { v4 as uuidv4 } from "uuid"; // For ES Modules
 
 import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -159,14 +158,13 @@ export default function MissingPersonForm() {
     try {
       // Construct JSON payload
       const payload = {
-        uuid: crypto.randomUUID(), // generate UUID for this session
         name: data.name,
         location: [parseFloat(data.latitude), parseFloat(data.longitude)],
         description: data.lastSeenClothing,
       };
 
       // Send POST request to Flask server
-      const response = await fetch("/init_session", {
+      const response = await fetch("http://127.0.0.1:5500/init_session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import shape, Polygon, MultiPolygon
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
+from fastapi.middleware.cors import CORSMiddleware
 import io
 import matplotlib
 import base64
@@ -16,7 +17,19 @@ matplotlib.use('Agg')  # Use non-GUI backend
 ee.Initialize(project='sartech-api')
 
 app = FastAPI(title="Combined Map API", description="Generate maps with forests, water, and roads")
+origins = [
+    "http://localhost:3000",  # your frontend URL
+    "http://127.0.0.1:3000",
+    "*"  # allow all (use only in dev)
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,           # Allowed origins
+    allow_credentials=True,
+    allow_methods=["*"],             # Allow all HTTP methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],             # Allow all headers
+)
 class BoundingBox(BaseModel):
     south: float = Field(..., ge=-90, le=90, description="Southern latitude boundary")
     west: float = Field(..., ge=-180, le=180, description="Western longitude boundary") 
