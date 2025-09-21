@@ -32,6 +32,14 @@ export default function SearchArea() {
     zoom: number;
   } | null>(null);
   const [isZoomedIn, setIsZoomedIn] = useState(false);
+  
+  // New workflow state
+  const [workflowStep, setWorkflowStep] = useState<'segmentation' | 'heatmap' | 'complete'>('segmentation');
+  const [heatmapData, setHeatmapData] = useState<any>(null);
+  const [heatmapOverlay, setHeatmapOverlay] = useState<any>(null);
+  const [currentView, setCurrentView] = useState<'segmentation' | 'heatmap'>('segmentation');
+  const [terrainAnalysisComplete, setTerrainAnalysisComplete] = useState(false);
+  
   const animationRef = useRef<{ active: boolean; timeouts: NodeJS.Timeout[] }>({
     active: false,
     timeouts: [],
@@ -354,7 +362,7 @@ export default function SearchArea() {
 
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/generate-layers", {
+      const response = await fetch("http://localhost:8000/segmentation", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -404,6 +412,9 @@ export default function SearchArea() {
         setTimeout(() => {
           zoomToBoundingBox();
         }, 500);
+        
+        // Mark that segmentation layers are ready
+        console.log("All layers loaded successfully");
       } else {
         console.error("Failed to generate animated layers");
       }
@@ -453,9 +464,12 @@ export default function SearchArea() {
       ) {
         // Animation complete or stopped
         if (animationRef.current.active) {
-          console.log("Animation cycle complete");
+          console.log("Animation cycle complete - starting heatmap generation");
           setAnimationActive(false);
           animationRef.current.active = false;
+          
+          // Animation complete - terrain analysis done
+          setTerrainAnalysisComplete(true);
         }
         return;
       }
@@ -767,6 +781,123 @@ export default function SearchArea() {
     setIsZoomedIn(false);
   };
 
+  // Generate heatmap and flight plan after segmentation
+  const generateHeatmapAndFlightPlan = async () => {
+    if (!boundingBox) {
+      console.error('No bounding box available for heatmap generation');
+      return;
+    }
+    
+    setWorkflowStep('heatmap');
+    setLoading(true);
+    
+    try {
+      console.log('Generating heatmap...');
+      
+      // Call the unified workflow API
+      const response = await fetch('http://localhost:8000/workflow', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bbox: boundingBox,
+          generate_heatmap: true,
+          generate_flightplan: false
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Workflow data received:', data);
+      
+      setHeatmapData(data.heatmap_data);
+      
+      // Display heatmap
+      if (data.heatmap_data) {
+        await displayHeatmap(data.heatmap_data);
+        setCurrentView('heatmap'); // Switch to heatmap view after generation
+        setWorkflowStep('complete');
+      }
+      
+    } catch (error) {
+      console.error('Error generating heatmap:', error);
+      setWorkflowStep('segmentation'); // Reset on error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const displayHeatmap = async (heatmapData: any) => {
+    if (!mapInstance || !heatmapData?.coordinates) return;
+    
+    console.log('Displaying heatmap with', heatmapData.coordinates.length, 'points');
+    setWorkflowStep('heatmap');
+    
+    // Clear existing heatmap
+    if (heatmapOverlay) {
+      heatmapOverlay.setMap(null);
+    }
+    
+    // Create heatmap points
+    const heatmapPoints = heatmapData.coordinates.map((coord: any) => ({
+      location: new window.google.maps.LatLng(coord.y, coord.x), // lat, lng
+      weight: coord.intensity || 1
+    }));
+    
+    const heatmap = new window.google.maps.visualization.HeatmapLayer({
+      data: heatmapPoints,
+      map: mapInstance,
+      radius: 20,
+      opacity: 0.8,
+      gradient: [
+        'rgba(255, 255, 255, 0)',      // Transparent white (no data)
+        'rgba(255, 255, 255, 0.1)',    // Very faint white
+        'rgba(255, 255, 255, 0.3)',    // Light white
+        'rgba(255, 255, 224, 0.5)',    // Very light yellow
+        'rgba(255, 255, 150, 0.7)',    // Light yellow
+        'rgba(255, 255, 0, 0.8)',      // Yellow
+        'rgba(255, 215, 0, 0.85)',     // Gold
+        'rgba(255, 165, 0, 0.9)',      // Orange
+        'rgba(255, 140, 0, 0.95)',     // Dark orange
+        'rgba(255, 69, 0, 1)',         // Red-orange
+        'rgba(255, 0, 0, 1)'           // Red (highest probability)
+      ]
+    });
+    
+    setHeatmapOverlay(heatmap);
+  };
+
+  const switchToSegmentationView = () => {
+    if (heatmapOverlay) {
+      heatmapOverlay.setMap(null);
+    }
+    
+    // Show segmentation layers
+    Object.values(animatedLayers).forEach((overlay: any) => {
+      if (overlay) overlay.setMap(mapInstance);
+    });
+    
+    setCurrentView('segmentation');
+  };
+
+  const switchToHeatmapView = () => {
+    // Hide segmentation layers
+    Object.values(animatedLayers).forEach((overlay: any) => {
+      if (overlay) overlay.setMap(null);
+    });
+    
+    // Show heatmap
+    if (heatmapOverlay && mapInstance) {
+      heatmapOverlay.setMap(mapInstance);
+    }
+    
+    setCurrentView('heatmap');
+  };
+
   // Initialize Google Map
   useEffect(() => {
     if (!apiKey) return;
@@ -793,7 +924,7 @@ export default function SearchArea() {
     if (!document.getElementById("google-maps-search-script")) {
       const script = document.createElement("script");
       script.id = "google-maps-search-script";
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initSearchMap`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=visualization&callback=initSearchMap`;
       script.async = true;
       script.defer = true;
       // @ts-ignore
@@ -864,40 +995,189 @@ export default function SearchArea() {
       <div id="search-map" style={{ width: "100%", height: "100%" }} />
 
       {/* Simplified Control Panel */}
-      <div className="absolute top-1/2 left-8 transform -translate-y-1/2 bg-white min-w-[325px] p-4 rounded-lg shadow-lg z-10 max-w-sm">
-        <h2 className="text-lg font-semibold mb-4">Segmentation Analysis</h2>
+      <div className="absolute top-1/2 left-8 transform -translate-y-1/2 bg-white min-w-[300px] p-4 rounded-lg shadow-lg z-10 max-w-sm">
+        <h2 className="text-lg font-semibold mb-4 text-center">
+          {!terrainAnalysisComplete && workflowStep === 'segmentation' && 'Terrain Analysis'}
+          {terrainAnalysisComplete && workflowStep === 'segmentation' && 'Terrain Analysis Complete'}
+          {workflowStep === 'heatmap' && 'Probability Mapping'}
+          {workflowStep === 'complete' && !terrainAnalysisComplete && 'Terrain Analysis Complete'}
+          {workflowStep === 'complete' && terrainAnalysisComplete && heatmapData && (
+            <div className="flex items-center justify-between">
+              <button
+                onClick={switchToSegmentationView}
+                disabled={currentView === 'segmentation'}
+                className={`p-1 rounded ${
+                  currentView === 'segmentation' 
+                    ? 'text-gray-400 cursor-not-allowed' 
+                    : 'text-black hover:bg-gray-100'
+                }`}
+              >
+                ←
+              </button>
+              <span className="text-sm">
+                {currentView === 'segmentation' ? 'Terrain Analysis' : 'Probability Heatmap'}
+              </span>
+              <button
+                onClick={switchToHeatmapView}
+                disabled={currentView === 'heatmap'}
+                className={`p-1 rounded ${
+                  currentView === 'heatmap' 
+                    ? 'text-gray-400 cursor-not-allowed' 
+                    : 'text-black hover:bg-gray-100'
+                }`}
+              >
+                →
+              </button>
+            </div>
+          )}
+        </h2>
+        
+        {/* Interactive Progress Bar */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">Progress</span>
+            <span className="text-sm font-medium text-gray-700">
+              {!terrainAnalysisComplete && workflowStep === 'segmentation' && '25%'}
+              {terrainAnalysisComplete && !heatmapData && '50%'}
+              {workflowStep === 'heatmap' && '75%'}
+              {workflowStep === 'complete' && heatmapData && '100%'}
+            </span>
+          </div>
+          
+          {/* Animated Progress Bar */}
+          <div className="w-full bg-gray-200 rounded-full h-2 mb-3 overflow-hidden">
+            <div className={`bg-black h-2 rounded-full transition-all duration-1000 ease-out ${
+              !terrainAnalysisComplete && workflowStep === 'segmentation' ? 'w-1/4' :
+              terrainAnalysisComplete && !heatmapData ? 'w-1/2' :
+              workflowStep === 'heatmap' ? 'w-3/4' :
+              workflowStep === 'complete' && heatmapData ? 'w-full' : 'w-0'
+            }`}></div>
+          </div>
+          
+          {/* Current Step Display */}
+          <div className="text-center">
+            {!terrainAnalysisComplete && workflowStep === 'segmentation' && (
+              <div className="flex items-center justify-center space-x-2 text-gray-600">
+                <div className="animate-spin rounded-full h-3 w-3 border-2 border-gray-400 border-b-transparent"></div>
+                <span className="text-xs">Analyzing satellite imagery...</span>
+              </div>
+            )}
+            {terrainAnalysisComplete && !heatmapData && (
+              <div className="flex items-center justify-center space-x-2 text-green-600">
+                <div className="rounded-full h-3 w-3 bg-green-500"></div>
+                <span className="text-xs">Terrain analysis complete</span>
+              </div>
+            )}
+            {workflowStep === 'heatmap' && (
+              <div className="flex items-center justify-center space-x-2 text-gray-600">
+                <div className="animate-bounce rounded-full h-3 w-3 bg-gray-400"></div>
+                <span className="text-xs">Computing search probabilities...</span>
+              </div>
+            )}
+            {workflowStep === 'complete' && heatmapData && (
+              <div className="flex items-center justify-center space-x-2 text-green-600">
+                <div className="rounded-full h-3 w-3 bg-green-500"></div>
+                <span className="text-xs">
+                  Viewing: {currentView === 'segmentation' ? 'Terrain Layers' : 'Search Probabilities'}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Analysis Area Info */}
           {boundingBox && (
-            <div className="text-sm text-gray-600 p-3 bg-gray-50 rounded">
-              <p>
-                <strong>Analysis Area:</strong>
-              </p>
-              <p>North: {boundingBox.north.toFixed(6)}</p>
-              <p>South: {boundingBox.south.toFixed(6)}</p>
-              <p>East: {boundingBox.east.toFixed(6)}</p>
-              <p>West: {boundingBox.west.toFixed(6)}</p>
-              <p>Area: {calculateArea(boundingBox).toFixed(2)} km²</p>
-              {isZoomedIn && (
-                <div className="text-blue-600 font-medium mt-2">
-                  📍 Zoomed to Analysis Area
-                </div>
-              )}
+            <div className="text-xs text-gray-600 p-2 bg-gray-50 rounded">
+              <p className="font-medium mb-1">Analysis Area:</p>
+              <div className="grid grid-cols-2 gap-1 text-xs">
+                <p>N: {boundingBox.north.toFixed(4)}</p>
+                <p>S: {boundingBox.south.toFixed(4)}</p>
+                <p>E: {boundingBox.east.toFixed(4)}</p>
+                <p>W: {boundingBox.west.toFixed(4)}</p>
+              </div>
+              <p className="text-xs mt-1">Area: {calculateArea(boundingBox).toFixed(1)} km²</p>
             </div>
           )}
 
           {/* Loading Status */}
           {loading && (
-            <div className="text-center p-4 bg-blue-50 rounded">
+            <div className="text-center p-3 bg-gray-50 rounded border">
               <div className="flex items-center justify-center space-x-3">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-5 w-5 border-2 border-black border-b-transparent"></div>
                 <div>
-                  <div className="text-sm text-blue-600 font-medium">
-                    Generating segmentation layers...
+                  <div className="text-sm font-medium text-black">
+                    {workflowStep === 'segmentation' && 'Processing Satellite Data'}
+                    {workflowStep === 'heatmap' && 'Generating Heat Map'}
+                    {workflowStep === 'complete' && 'Analysis Complete'}
                   </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    This may take a few moments
+                  <div className="text-xs text-gray-500">
+                    {workflowStep === 'segmentation' && 'Identifying terrain features'}
+                    {workflowStep === 'heatmap' && 'Computing probabilities'}
+                    {workflowStep === 'complete' && 'Ready for operations'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Heatmap Info */}
+          {heatmapData && workflowStep === 'complete' && currentView === 'heatmap' && (
+            <div className="text-xs p-2 bg-orange-50 border border-orange-200 rounded">
+              <p className="font-medium text-orange-700 mb-1">Probability Heatmap</p>
+              <p className="text-orange-600">Search Points: {heatmapData.coordinates?.length || 0}</p>
+              <p className="text-orange-600 mb-2">Area Coverage: Complete</p>
+              
+              {/* Heatmap Legend */}
+              <div className="border-t border-orange-200 pt-2">
+                <p className="font-medium text-orange-700 mb-1">Search Probability</p>
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-white border border-gray-300 rounded"></div>
+                    <span className="text-gray-600">No Activity</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-yellow-300 rounded"></div>
+                    <span className="text-gray-600">Low</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-orange-400 rounded"></div>
+                    <span className="text-gray-600">Medium</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-red-600 rounded"></div>
+                    <span className="text-gray-600">High</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Segmentation Info */}
+          {Object.keys(animatedLayers).length > 0 && workflowStep === 'complete' && currentView === 'segmentation' && (
+            <div className="text-xs p-2 bg-blue-50 border border-blue-200 rounded">
+              <p className="font-medium text-blue-700 mb-1">Terrain Layers</p>
+              <p className="text-blue-600 mb-2">Available: {Object.keys(animatedLayers).join(', ').replace(/_/g, ' ')}</p>
+              
+              {/* Terrain Legend */}
+              <div className="border-t border-blue-200 pt-2">
+                <p className="font-medium text-blue-700 mb-1">Legend</p>
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-blue-500 rounded"></div>
+                    <span className="text-gray-600">Water Bodies</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-green-300 rounded"></div>
+                    <span className="text-gray-600">Sparse Forest</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-green-700 rounded"></div>
+                    <span className="text-gray-600">Dense Forest</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-2 bg-gray-700 rounded"></div>
+                    <span className="text-gray-600">Roads</span>
                   </div>
                 </div>
               </div>
@@ -906,92 +1186,58 @@ export default function SearchArea() {
 
           {/* Animation Status */}
           {animationActive && (
-            <div className="text-center p-4 bg-green-50 rounded">
-              <div className="text-sm text-green-600 font-medium">
-                Animation in progress...
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                {layerOrder.map((layer: string, idx: number) => (
-                  <span
-                    key={layer}
-                    className={
-                      animationProgress > idx
-                        ? "text-green-600"
-                        : "text-gray-400"
-                    }
-                  >
-                    {layer} {animationProgress > idx ? "✓" : "○"}
-                    {idx < layerOrder.length - 1 ? " → " : ""}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Available Layers Info */}
-          {Object.keys(animatedLayers).length > 0 && !animationActive && (
-            <div className="text-sm text-gray-600 p-3 bg-gray-50 rounded">
-              <p>
-                <strong>Ready Layers:</strong>
-              </p>
-              <div className="text-xs text-gray-500 mt-1">
-                {Object.keys(animatedLayers).join(", ")}
-              </div>
-            </div>
-          )}
-
-          {/* Legend */}
-          {Object.keys(animatedLayers).length > 0 && (
-            <div className="text-sm p-3 bg-gray-50 rounded">
-              <p className="font-semibold mb-2 text-gray-700">Legend</p>
-              <div className="space-y-1 text-xs">
-                <div className="flex items-center space-x-2">
-                  <div className="w-4 h-3 bg-blue-500 rounded"></div>
-                  <span className="text-gray-600">Water Bodies</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-4 h-3 bg-green-300 rounded"></div>
-                  <span className="text-gray-600">Sparse Forest</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-4 h-3 bg-green-700 rounded"></div>
-                  <span className="text-gray-600">Dense Forest</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-4 h-3 bg-yellow-600 rounded"></div>
-                  <span className="text-gray-600">Roads</span>
-                </div>
+            <div className="text-center p-2 bg-green-50 rounded border border-green-200">
+              <div className="text-xs text-green-600 font-medium">
+                Animation Running... ({animationProgress}%)
               </div>
             </div>
           )}
 
           {/* Simple Controls */}
           <div className="flex space-x-2">
-            {Object.keys(animatedLayers).length > 0 ? (
-              <>
-                <button
-                  className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-[14px] px-4 py-2 rounded disabled:opacity-50"
-                  onClick={startAnimation}
-                  disabled={animationActive}
-                >
-                  {animationActive ? "Running..." : "Start Animation"}
-                </button>
-                <button
-                  className="flex-1 bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded"
-                  onClick={clearAllLayers}
-                >
-                  Clear
-                </button>
-              </>
-            ) : boundingBox && !loading ? (
+            {terrainAnalysisComplete && !heatmapData ? (
               <button
-                className="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"
+                className="w-full bg-black hover:bg-gray-800 text-white px-4 py-2 rounded font-medium transition-colors duration-200"
+                onClick={generateHeatmapAndFlightPlan}
+                disabled={loading}
+              >
+                Continue to Heatmap
+              </button>
+            ) : boundingBox && !loading && !Object.keys(animatedLayers).length ? (
+              <button
+                className="w-full bg-black hover:bg-gray-800 text-white px-4 py-2 rounded font-medium transition-colors duration-200"
                 onClick={generateAnimatedLayers}
               >
                 Generate Analysis
               </button>
             ) : null}
           </div>
+
+          {/* View Navigation Controls - Only show when heatmap is complete */}
+          {workflowStep === 'complete' && heatmapData && (
+            <div className="flex space-x-2">
+              <button
+                onClick={switchToSegmentationView}
+                className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors duration-200 ${
+                  currentView === 'segmentation'
+                    ? 'bg-black text-white'
+                    : 'bg-white text-black border border-gray-300 hover:bg-gray-100'
+                }`}
+              >
+                Terrain Layers
+              </button>
+              <button
+                onClick={switchToHeatmapView}
+                className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors duration-200 ${
+                  currentView === 'heatmap'
+                    ? 'bg-black text-white'
+                    : 'bg-white text-black border border-gray-300 hover:bg-gray-100'
+                }`}
+              >
+                Search Heatmap
+              </button>
+            </div>
+          )}
 
           {/* Focus Mask Control */}
           {Object.keys(animatedLayers).length > 0 && (
@@ -1008,9 +1254,9 @@ export default function SearchArea() {
                   createMaskOverlay();
                 }
               }}
-              className="w-full bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded text-sm"
+              className="w-full bg-white hover:bg-gray-100 text-black border border-gray-300 px-3 py-2 rounded font-medium transition-colors duration-200 text-sm"
             >
-              {maskOverlay ? "Remove" : "Add"} Focus Mask
+              {maskOverlay ? "Remove Focus Mask" : "Add Focus Mask"}
             </button>
           )}
         </div>

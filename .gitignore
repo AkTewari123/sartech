@@ -1,0 +1,5 @@
+*.npz
+*.npy
+optimized_swarm_analysis*
+*.csv
+__pycache__/
