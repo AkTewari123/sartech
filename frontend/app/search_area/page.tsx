@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 interface BoundingBox {
   north: number;
@@ -1309,16 +1310,14 @@ export default function SearchArea() {
               {maskOverlay ? "Remove Focus Mask" : "Add Focus Mask"}
             </button>
           )}
-          <button
-            onClick={() => {
-              window.location.href = `/find_match?id=${window.location.href.slice(
-                -8
-              )}`;
-            }}
+          <Link
+            href={`/find_match?id=${window.location.href.slice(-8)}
+              `}
+            target="_blank"
             className="w-full bg-white hover:bg-gray-100 text-black border border-gray-300 px-3 py-2 rounded font-medium transition-colors duration-200 text-sm"
           >
             View Drone Images
-          </button>
+          </Link>
         </div>
       </div>
 

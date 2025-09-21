@@ -6,8 +6,24 @@ from supabase import create_client, Client
 from datetime import datetime
 from flask_cors import CORS
 import os
+import google.generativeai as genai
 from dotenv import load_dotenv
+from PIL import Image
+
 load_dotenv()
+
+model = genai.GenerativeModel('gemini-1.5-pro-latest')
+generation_config = genai.types.GenerationConfig(max_output_tokens=1024)
+
+# --- Gemini API Configuration ---
+try:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in environment variables.")
+    genai.configure(api_key=api_key)
+except ValueError as e:
+    print(f"Error: {e}")
+    exit()
 # -----------------------------
 # Supabase setup
 # -----------------------------
@@ -108,6 +124,58 @@ def upload_image():
     except Exception as e:
         print(str(e))
         return jsonify({"error": str(e)}), 500
+@app.route("/check_similarity", methods=["POST"])
+def check_similarity():
+    """
+    Receives JSON with two base64 images and asks Gemini if they depict the same person.
+    JSON format:
+    {
+        "image1": "<base64 string>",
+        "image2": "<base64 string>"
+    }
+    """
+    try:
+        data = request.json
+        if not data or "image1" not in data or "image2" not in data:
+            return jsonify({"error": "Request must include 'image1' and 'image2' base64 fields."}), 400
+
+        # Decode images
+        try:
+            img1 = Image.open(io.BytesIO(base64.b64decode(data["image1"].split(",")[-1])))
+            img2 = Image.open(io.BytesIO(base64.b64decode(data["image2"].split(",")[-1])))
+        except Exception as e:
+            return jsonify({"error": f"Invalid image data: {e}"}), 400
+
+        # Prepare Gemini prompt
+        prompt_text = (
+            "You are a facial recognition assistant. Determine if the two provided images "
+            "contain the same person. Respond with a short answer: 'Yes' or 'No', and optionally a confidence level. "
+            "Do not include explanations or extra commentary."
+        )
+
+        # Send images and prompt to Gemini
+        prompt_parts = [
+            prompt_text,
+            img1,
+            img2
+        ]
+
+        print("Sending images to Gemini API for similarity check...")
+        response = model.generate_content(
+            contents=prompt_parts,
+            generation_config=generation_config
+        )
+        print("Received response from Gemini API.")
+
+        return jsonify({
+            "message": "Success",
+            "result": response.text.strip()
+        })
+
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # -----------------------------
 # Run server
 # -----------------------------
